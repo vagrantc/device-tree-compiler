@@ -1,0 +1,5 @@
+device-tree-compiler (0.1~git20070226-1) experimental; urgency=low
+
+  * Initial release. (Closes: #413290)
+
+ -- Aurélien GÉRÔME <ag@roxor.cx>  Sat,  3 Mar 2007 23:13:14 +0100

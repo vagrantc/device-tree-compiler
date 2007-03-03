@@ -1,0 +1,16 @@
+Source: device-tree-compiler
+Section: devel
+Priority: extra
+Maintainer: Aurélien GÉRÔME <ag@roxor.cx>
+Uploaders: Sven Luther <luther@debian.org>
+Standards-Version: 3.7.2
+Build-Depends: debhelper (>= 5), flex, bison
+
+Package: device-tree-compiler
+Architecture: any
+Depends: ${shlibs:Depends}
+Description: OpenFirmware Device Tree Compiler
+ This tool compiles device-tree descriptions for booting PowerPC64
+ or embedded PowerPC kernels on systems without OpenFirmware.
+ .
+  Homepage: http://dtc.ozlabs.org/
