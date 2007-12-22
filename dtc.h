@@ -36,6 +36,13 @@
 
 #include "flat_dt.h"
 
+/*
+ * Command line options
+ */
+extern int quiet;		/* Level of quietness */
+extern int reservenum;		/* Number of memory reservation slots */
+extern int minsize;		/* Minimum blob size */
+
 static inline void die(char * str, ...)
 {
 	va_list ap;
@@ -104,10 +111,10 @@ struct data {
 	char *val;
 	int asize;
 	struct fixup *refs;
+	struct fixup *labels;
 };
 
-#define empty_data \
-	((struct data){.len = 0, .val = NULL, .asize = 0, .refs = NULL})
+#define empty_data ((struct data){ /* all .members = 0 or NULL */ })
 
 void fixup_free(struct fixup *f);
 void data_free(struct data d);
@@ -128,6 +135,7 @@ struct data data_append_zeroes(struct data d, int len);
 struct data data_append_align(struct data d, int align);
 
 struct data data_add_fixup(struct data d, char *ref);
+struct data data_add_label(struct data d, char *label);
 
 int data_is_one_string(struct data d);
 
@@ -218,7 +226,7 @@ struct boot_info *dt_from_blob(FILE *f);
 /* Tree source */
 
 void dt_to_source(FILE *f, struct boot_info *bi);
-struct boot_info *dt_from_source(FILE *f);
+struct boot_info *dt_from_source(const char *f);
 
 /* FS trees */
 

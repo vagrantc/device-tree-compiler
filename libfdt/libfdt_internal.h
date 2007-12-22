@@ -1,43 +1,8 @@
-This package was debianized by Aurélien GÉRÔME <ag@roxor.cx> on
-Sat,  3 Mar 2007 23:13:14 +0100.
-
-It was checked out from <git://www.jdl.com/software/dtc.git>.
-
-Upstream Authors:
-
-  David Gibson <david@gibson.dropbear.id.au>
-  Jon Loeliger <jdl@freescale.com>
-
-Copyright notices:
-
-  2005-2007 David Gibson <david@gibson.dropbear.id.au>, IBM Corporation.
-  2007 Jon Loeliger, Freescale Semiconductor, Inc.
-
-Licenses:
-
-  dtc code:
-
-/*
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation; either version 2 of the
- * License, or (at your option) any later version.
- *
- *  This program is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
- *  General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301,
- *  USA.
- */
-
-  libfdt code:
-
+#ifndef _LIBFDT_INTERNAL_H
+#define _LIBFDT_INTERNAL_H
 /*
  * libfdt - Flat Device Tree manipulation
+ * Copyright (C) 2006 David Gibson, IBM Corporation.
  *
  * libfdt is dual licensed: you can use it either under the terms of
  * the GPL, or the BSD license, at your option.
@@ -85,7 +50,29 @@ Licenses:
  *     OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
  *     EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
+#include <fdt.h>
 
+#define ALIGN(x, a)	(((x) + (a) - 1) & ~((a) - 1))
+#define PALIGN(p, a)	((void *)ALIGN((unsigned long)(p), (a)))
 
-The Debian packaging is (C) 2007, Aurélien GÉRÔME <ag@roxor.cx> and
-is licensed under the GPL, see `/usr/share/common-licenses/GPL'.
+#define memeq(p, q, n)	(memcmp((p), (q), (n)) == 0)
+#define streq(p, q)	(strcmp((p), (q)) == 0)
+
+int _fdt_check_header(const void *fdt);
+uint32_t _fdt_next_tag(const void *fdt, int startoffset, int *nextoffset);
+const char *_fdt_find_string(const char *strtab, int tabsize, const char *s);
+int _fdt_node_end_offset(void *fdt, int nodeoffset);
+
+static inline const void *_fdt_offset_ptr(const void *fdt, int offset)
+{
+	return fdt + fdt_off_dt_struct(fdt) + offset;
+}
+
+static inline void *_fdt_offset_ptr_w(void *fdt, int offset)
+{
+	return (void *)_fdt_offset_ptr(fdt, offset);
+}
+
+#define SW_MAGIC		(~FDT_MAGIC)
+
+#endif /* _LIBFDT_INTERNAL_H */

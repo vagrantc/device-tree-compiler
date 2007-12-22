@@ -1,3 +1,38 @@
+device-tree-compiler (1.0.0.dfsg-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #438479)
+    + Fix missing /chosen node, as it has been removed from DTS.
+      (Closes: #436234)
+  * Remove ftdump from the upstream tarball.
+    + This file has no license notice.
+    + Fix conflict with the freetype2-demos package. (Closes: #434890)
+    + David Gibson told me that he would not bother even installing
+      ftdump. It was meant to be a debugging tool, dumping a blob
+      back into text format, but it never got very far and he has
+      been meaning to get rid of it.
+  + Update tests/dumptrees.c in the upstream tarball with GIT commit
+    08c0be206d5d6b035db11048d19be33216332f2b.
+    + Fix missing copyright and license notices.
+  * Update debian/copyright.
+    + Mention dual GPLv2+/BSD licensing of libfdt.
+    + Add Jon Loeliger as an upstream author.
+  * Bump Standards-Version to 3.7.3.
+  * Add the Homepage field and remove it from the long description.
+  * Add the Vcs-Git/Vcs-Browser fields.
+  * Add the XS-DM-Upload-Allowed field.
+  * Rewrite short and long descriptions in debian/control.
+  * Rewrite debian/rules to handle the noopt build option.
+  * Write and add a manpage for dtc.
+  * Add documentation under /usr/share/doc/device-tree-compiler/.
+    + Add Build-Depends on texlive and texlive-latex-extra.
+    + Add debian/doc-base.dtc-manual and debian/doc-base.dtc-paper.
+    + Create a Makefile to build dtc-paper.tex.
+      - Add quilt support to build system.
+      - Add 01_build_doc.diff.
+    + Update debian/rules to prepare documentation.
+
+ -- Aurélien GÉRÔME <ag@roxor.cx>  Sat, 22 Dec 2007 04:02:24 +0100
+
 device-tree-compiler (0.1~git20070226-1) experimental; urgency=low
 
   * Initial release. (Closes: #413290)
