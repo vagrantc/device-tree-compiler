@@ -1,7 +1,7 @@
 /*
  * (C) Copyright David Gibson <dwg@au1.ibm.com>, IBM Corporation.  2005.
  *
- * 
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
@@ -11,25 +11,23 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  *  General Public License for more details.
- *                                                                       
- *  You should have received a copy of the GNU General Public License    
- *  along with this program; if not, write to the Free Software          
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 
- *                                                                   USA 
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307
+ *                                                                   USA
  */
 
-%option noyywrap nounput yylineno
+%option noyywrap nounput yylineno stack
 
 %x INCLUDE
-%x CELLDATA
 %x BYTESTRING
-%x MEMRESERVE
+%x PROPNODENAME
+%s V1
 
-PROPCHAR	[a-zA-Z0-9,._+*#?-]
-UNITCHAR	[0-9a-f,]
-WS		[[:space:]]
-
-REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
+PROPNODECHAR	[a-zA-Z0-9,._+*#?@-]
+PATHCHAR	({PROPNODECHAR}|[/])
+LABEL		[a-zA-Z_][a-zA-Z0-9_]*
 
 %{
 #include "dtc.h"
@@ -45,13 +43,19 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
 #define DPRINT(fmt, ...)	do { } while (0)
 #endif
 
+static int dts_version; /* = 0 */
 
-
+#define BEGIN_DEFAULT()	if (dts_version == 0) { \
+				DPRINT("<INITIAL>\n"); \
+				BEGIN(INITIAL); \
+			} else { \
+				DPRINT("<V1>\n"); \
+				BEGIN(V1); \
+			}
 %}
 
 %%
-
-"/include/"		BEGIN(INCLUDE);
+<*>"/include/"		yy_push_state(INCLUDE);
 
 <INCLUDE>\"[^"\n]*\"	{
 			yytext[strlen(yytext) - 1] = 0;
@@ -59,18 +63,18 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
 				/* Some unrecoverable error.*/
 				exit(1);
 			}
-			BEGIN(INITIAL);
+			yy_pop_state();
 		}
 
 
-<<EOF>>		{
+<*><<EOF>>		{
 			if (!pop_input_file()) {
 				yyterminate();
 			}
 		}
 
-\"[^"]*\"	{
-			yylloc.filenum = srcpos_filenum;
+<*>\"([^\\"]|\\.)*\"	{
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			DPRINT("String: %s\n", yytext);
 			yylval.data = data_copy_escape_string(yytext+1,
@@ -79,46 +83,34 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
 			return DT_STRING;
 		}
 
-"/memreserve/"	{
-			yylloc.filenum = srcpos_filenum;
+<*>"/dts-v1/"	{
+			yylloc.file = srcpos_file;
+			yylloc.first_line = yylineno;
+			DPRINT("Keyword: /dts-v1/\n");
+			dts_version = 1;
+			BEGIN_DEFAULT();
+			return DT_V1;
+		}
+
+<*>"/memreserve/"	{
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			DPRINT("Keyword: /memreserve/\n");
-			BEGIN(MEMRESERVE);
+			BEGIN_DEFAULT();
 			return DT_MEMRESERVE;
 		}
 
-<MEMRESERVE>[0-9a-fA-F]+ {
-			yylloc.filenum = srcpos_filenum;
-			yylloc.first_line = yylineno;
-			if (yyleng > 2*sizeof(yylval.addr)) {
-				fprintf(stderr, "Address value %s too large\n",
-					yytext);
-			}
-			yylval.addr = (u64) strtoull(yytext, NULL, 16);
-			DPRINT("Addr: %llx\n",
-			       (unsigned long long)yylval.addr);
-			return DT_ADDR;
-		}
-
-<MEMRESERVE>";"	{
-			yylloc.filenum = srcpos_filenum;
-			yylloc.first_line = yylineno;
-			DPRINT("/MEMRESERVE\n");
-			BEGIN(INITIAL);
-			return ';';
-		}
-
-<*>[a-zA-Z_][a-zA-Z0-9_]*:	{
-			yylloc.filenum = srcpos_filenum;
+<*>{LABEL}:	{
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			DPRINT("Label: %s\n", yytext);
-			yylval.str = strdup(yytext);
-			yylval.str[yyleng-1] = '\0';
+			yylval.labelref = strdup(yytext);
+			yylval.labelref[yyleng-1] = '\0';
 			return DT_LABEL;
 		}
 
-<CELLDATA>[bodh]# {
-			yylloc.filenum = srcpos_filenum;
+<INITIAL>[bodh]# {
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			if (*yytext == 'b')
 				yylval.cbase = 2;
@@ -132,32 +124,49 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
 			return DT_BASE;
 		}
 
-<CELLDATA>[0-9a-fA-F]+	{
-			yylloc.filenum = srcpos_filenum;
+<INITIAL>[0-9a-fA-F]+	{
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
-			yylval.str = strdup(yytext);
-			DPRINT("Cell: '%s'\n", yylval.str);
-			return DT_CELL;
+			yylval.literal = strdup(yytext);
+			DPRINT("Literal: '%s'\n", yylval.literal);
+			return DT_LEGACYLITERAL;
 		}
 
-<CELLDATA>">"	{
-			yylloc.filenum = srcpos_filenum;
+<V1>[0-9]+|0[xX][0-9a-fA-F]+      {
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
-			DPRINT("/CELLDATA\n");
-			BEGIN(INITIAL);
-			return '>';
+			yylval.literal = strdup(yytext);
+			DPRINT("Literal: '%s'\n", yylval.literal);
+			return DT_LITERAL;
 		}
 
-<CELLDATA>\&{REFCHAR}*	{
-			yylloc.filenum = srcpos_filenum;
+\&{LABEL}	{	/* label reference */
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			DPRINT("Ref: %s\n", yytext+1);
-			yylval.str = strdup(yytext+1);
+			yylval.labelref = strdup(yytext+1);
+			return DT_REF;
+		}
+
+"&{/"{PATHCHAR}+\}	{	/* new-style path reference */
+			yylloc.file = srcpos_file;
+			yylloc.first_line = yylineno;
+			yytext[yyleng-1] = '\0';
+			DPRINT("Ref: %s\n", yytext+2);
+			yylval.labelref = strdup(yytext+2);
+			return DT_REF;
+		}
+
+<INITIAL>"&/"{PATHCHAR}+ {	/* old-style path reference */
+			yylloc.file = srcpos_file;
+			yylloc.first_line = yylineno;
+			DPRINT("Ref: %s\n", yytext+1);
+			yylval.labelref = strdup(yytext+1);
 			return DT_REF;
 		}
 
 <BYTESTRING>[0-9a-fA-F]{2} {
-			yylloc.filenum = srcpos_filenum;
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			yylval.byte = strtol(yytext, NULL, 16);
 			DPRINT("Byte: %02x\n", (int)yylval.byte);
@@ -165,44 +174,26 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
 		}
 
 <BYTESTRING>"]"	{
-			yylloc.filenum = srcpos_filenum;
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			DPRINT("/BYTESTRING\n");
-			BEGIN(INITIAL);
+			BEGIN_DEFAULT();
 			return ']';
 		}
 
-,		{ /* Technically this is a valid property name,
-		     but we'd rather use it as punctuation, so detect it
-		     here in preference */
-			yylloc.filenum = srcpos_filenum;
+<PROPNODENAME>{PROPNODECHAR}+ {
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
-			DPRINT("Char (propname like): %c (\\x%02x)\n", yytext[0],
-				(unsigned)yytext[0]);
-			return yytext[0];
+			DPRINT("PropNodeName: %s\n", yytext);
+			yylval.propnodename = strdup(yytext);
+			BEGIN_DEFAULT();
+			return DT_PROPNODENAME;
 		}
 
-{PROPCHAR}+	{
-			yylloc.filenum = srcpos_filenum;
-			yylloc.first_line = yylineno;
-			DPRINT("PropName: %s\n", yytext);
-			yylval.str = strdup(yytext);
-			return DT_PROPNAME;
-		}
-
-{PROPCHAR}+(@{UNITCHAR}+)? {
-			yylloc.filenum = srcpos_filenum;
-			yylloc.first_line = yylineno;
-			DPRINT("NodeName: %s\n", yytext);
-			yylval.str = strdup(yytext);
-			return DT_NODENAME;
-		}
-
-
-<*>{WS}+	/* eat whitespace */
+<*>[[:space:]]+	/* eat whitespace */
 
 <*>"/*"([^*]|\*+[^*/])*\*+"/"	{
-			yylloc.filenum = srcpos_filenum;
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
 			DPRINT("Comment: %s\n", yytext);
 			/* eat comments */
@@ -211,24 +202,19 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
 <*>"//".*\n	/* eat line comments */
 
 <*>.		{
-			yylloc.filenum = srcpos_filenum;
+			yylloc.file = srcpos_file;
 			yylloc.first_line = yylineno;
-			switch (yytext[0]) {
-				case '<':
-					DPRINT("CELLDATA\n");
-					BEGIN(CELLDATA);
-					break;
-				case '[':
-					DPRINT("BYTESTRING\n");
-					BEGIN(BYTESTRING);
-					break;
-				default:
-
 			DPRINT("Char: %c (\\x%02x)\n", yytext[0],
 				(unsigned)yytext[0]);
-					break;
+			if (yytext[0] == '[') {
+				DPRINT("<BYTESTRING>\n");
+				BEGIN(BYTESTRING);
 			}
-
+			if ((yytext[0] == '{')
+			    || (yytext[0] == ';')) {
+				DPRINT("<PROPNODENAME>\n");
+				BEGIN(PROPNODENAME);
+			}
 			return yytext[0];
 		}
 
@@ -240,8 +226,7 @@ REFCHAR		({PROPCHAR}|{UNITCHAR}|[/@])
  */
 
 struct incl_file {
-	int filenum;
-	FILE *file;
+	struct dtc_file *file;
 	YY_BUFFER_STATE yy_prev_buf;
 	int yy_prev_lineno;
 	struct incl_file *prev;
@@ -260,8 +245,9 @@ static int incl_depth = 0;
 
 int push_input_file(const char *filename)
 {
-	FILE *f;
 	struct incl_file *incl_file;
+	struct dtc_file *newfile;
+	struct search_path search, *searchptr = NULL;
 
 	if (!filename) {
 		yyerror("No include file name given.");
@@ -273,21 +259,28 @@ int push_input_file(const char *filename)
 		return 0;
 	}
 
-	f = dtc_open_file(filename);
-
-	incl_file = malloc(sizeof(struct incl_file));
-	if (!incl_file) {
-		yyerror("Can not allocate include file space.");
-		return 0;
+	if (srcpos_file) {
+		search.dir = srcpos_file->dir;
+		search.next = NULL;
+		search.prev = NULL;
+		searchptr = &search;
 	}
+
+	newfile = dtc_open_file(filename, searchptr);
+	if (!newfile) {
+		yyerrorf("Couldn't open \"%s\": %s",
+		         filename, strerror(errno));
+		exit(1);
+	}
+
+	incl_file = xmalloc(sizeof(struct incl_file));
 
 	/*
 	 * Save current context.
 	 */
 	incl_file->yy_prev_buf = YY_CURRENT_BUFFER;
 	incl_file->yy_prev_lineno = yylineno;
-	incl_file->filenum = srcpos_filenum;
-	incl_file->file = yyin;
+	incl_file->file = srcpos_file;
 	incl_file->prev = incl_file_stack;
 
 	incl_file_stack = incl_file;
@@ -295,9 +288,9 @@ int push_input_file(const char *filename)
 	/*
 	 * Establish new context.
 	 */
-	srcpos_filenum = lookup_file_name(filename, 0);
+	srcpos_file = newfile;
 	yylineno = 1;
-	yyin = f;
+	yyin = newfile->file;
 	yy_switch_to_buffer(yy_create_buffer(yyin, YY_BUF_SIZE));
 
 	return 1;
@@ -311,7 +304,7 @@ int pop_input_file(void)
 	if (incl_file_stack == 0)
 		return 0;
 
-	fclose(yyin);
+	dtc_close_file(srcpos_file);
 
 	/*
 	 * Pop.
@@ -326,8 +319,8 @@ int pop_input_file(void)
 	yy_delete_buffer(YY_CURRENT_BUFFER);
 	yy_switch_to_buffer(incl_file->yy_prev_buf);
 	yylineno = incl_file->yy_prev_lineno;
-	srcpos_filenum = incl_file->filenum;
-	yyin = incl_file->file;
+	srcpos_file = incl_file->file;
+	yyin = incl_file->file ? incl_file->file->file : NULL;
 
 	/*
 	 * Free old state.

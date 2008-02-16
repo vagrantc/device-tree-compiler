@@ -58,7 +58,6 @@
 #define memeq(p, q, n)	(memcmp((p), (q), (n)) == 0)
 #define streq(p, q)	(strcmp((p), (q)) == 0)
 
-int _fdt_check_header(const void *fdt);
 uint32_t _fdt_next_tag(const void *fdt, int startoffset, int *nextoffset);
 const char *_fdt_find_string(const char *strtab, int tabsize, const char *s);
 int _fdt_node_end_offset(void *fdt, int nodeoffset);
@@ -71,6 +70,18 @@ static inline const void *_fdt_offset_ptr(const void *fdt, int offset)
 static inline void *_fdt_offset_ptr_w(void *fdt, int offset)
 {
 	return (void *)_fdt_offset_ptr(fdt, offset);
+}
+
+static inline const struct fdt_reserve_entry *_fdt_mem_rsv(const void *fdt, int n)
+{
+	const struct fdt_reserve_entry *rsv_table =
+		fdt + fdt_off_mem_rsvmap(fdt);
+
+	return rsv_table + n;
+}
+static inline struct fdt_reserve_entry *_fdt_mem_rsv_w(void *fdt, int n)
+{
+	return (void *)_fdt_mem_rsv(fdt, n);
 }
 
 #define SW_MAGIC		(~FDT_MAGIC)

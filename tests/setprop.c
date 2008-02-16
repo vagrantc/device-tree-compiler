@@ -52,7 +52,7 @@ int main(int argc, char *argv[])
 
 	fdt = buf;
 
-	intp = check_getprop_typed(fdt, 0, "prop-int", TEST_VALUE_1);
+	intp = check_getprop_cell(fdt, 0, "prop-int", TEST_VALUE_1);
 
 	verbose_printf("Old int value was 0x%08x\n", *intp);
 	err = fdt_setprop_string(fdt, 0, "prop-int", NEW_STRING);
@@ -62,7 +62,7 @@ int main(int argc, char *argv[])
 
 	strp = check_getprop_string(fdt, 0, "prop-int", NEW_STRING);
 	verbose_printf("New value is \"%s\"\n", strp);
-	
+
 	strp = check_getprop(fdt, 0, "prop-str", strlen(TEST_STRING_1)+1,
 			     TEST_STRING_1);
 

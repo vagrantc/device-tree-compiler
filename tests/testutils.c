@@ -69,6 +69,21 @@ void test_init(int argc, char *argv[])
 		       test_name, getpid());
 }
 
+void check_mem_rsv(void *fdt, int n, uint64_t addr, uint64_t size)
+{
+	int err;
+	uint64_t addr_v, size_v;
+
+	err = fdt_get_mem_rsv(fdt, n, &addr_v, &size_v);
+	if (err < 0)
+		FAIL("fdt_get_mem_rsv(%d): %s", n, fdt_strerror(err));
+	if ((addr_v != addr) || (size_v != size))
+		FAIL("fdt_get_mem_rsv() returned (0x%llx,0x%llx) "
+		     "instead of (0x%llx,0x%llx)",
+		     (unsigned long long)addr_v, (unsigned long long)size_v,
+		     (unsigned long long)addr, (unsigned long long)size);
+}
+
 void check_property(void *fdt, int nodeoffset, const char *name,
 		    int len, const void *val)
 {
@@ -104,7 +119,6 @@ void check_property(void *fdt, int nodeoffset, const char *name,
 		     name, proplen, len);
 	if (memcmp(val, prop->data, len) != 0)
 		FAIL("Data mismatch on property \"%s\"", name);
-	
 }
 
 const void *check_getprop(void *fdt, int nodeoffset, const char *name,
@@ -124,6 +138,21 @@ const void *check_getprop(void *fdt, int nodeoffset, const char *name,
 		FAIL("Data mismatch on property \"%s\"", name);
 
 	return propval;
+}
+
+int nodename_eq(const char *s1, const char *s2)
+{
+	int len = strlen(s2);
+
+	len = strlen(s2);
+	if (strncmp(s1, s2, len) != 0)
+		return 0;
+	if (s1[len] == '\0')
+		return 1;
+	else if (!memchr(s2, '@', len) && (s1[len] == '@'))
+		return 1;
+	else
+		return 0;
 }
 
 #define CHUNKSIZE	128
@@ -190,4 +219,22 @@ void save_blob(const char *filename, void *fdt)
 			       strerror(errno));
 		offset += ret;
 	}
+}
+
+void *open_blob_rw(void *blob)
+{
+	int err;
+	void *buf = blob;
+
+	err = fdt_open_into(blob, buf, fdt_totalsize(blob));
+	if (err == -FDT_ERR_NOSPACE) {
+		/* Ran out of space converting to v17 */
+		int newsize = fdt_totalsize(blob) + 8;
+
+		buf = xmalloc(newsize);
+		err = fdt_open_into(blob, buf, newsize);
+	}
+	if (err)
+		FAIL("fdt_open_into(): %s", fdt_strerror(err));
+	return buf;
 }

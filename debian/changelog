@@ -1,3 +1,11 @@
+device-tree-compiler (1.1.0.dfsg-1) unstable; urgency=low
+
+  * New upstream release.
+  * Fix lintian warning "copyright-without-copyright-notice".
+    + Update debian/copyright.
+
+ -- Aurélien GÉRÔME <ag@roxor.cx>  Sat, 16 Feb 2008 17:08:36 +0100
+
 device-tree-compiler (1.0.0.dfsg-1) unstable; urgency=low
 
   * New upstream release. (Closes: #438479)
@@ -10,7 +18,7 @@ device-tree-compiler (1.0.0.dfsg-1) unstable; urgency=low
       ftdump. It was meant to be a debugging tool, dumping a blob
       back into text format, but it never got very far and he has
       been meaning to get rid of it.
-  + Update tests/dumptrees.c in the upstream tarball with GIT commit
+  * Update tests/dumptrees.c in the upstream tarball with GIT commit
     08c0be206d5d6b035db11048d19be33216332f2b.
     + Fix missing copyright and license notices.
   * Update debian/copyright.
