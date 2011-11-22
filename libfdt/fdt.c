@@ -55,7 +55,7 @@
 
 #include "libfdt_internal.h"
 
-int _fdt_check_header(const void *fdt)
+int fdt_check_header(const void *fdt)
 {
 	if (fdt_magic(fdt) == FDT_MAGIC) {
 		/* Complete tree */
@@ -90,7 +90,7 @@ const void *fdt_offset_ptr(const void *fdt, int offset, int len)
 	return p;
 }
 
-uint32_t _fdt_next_tag(const void *fdt, int offset, int *nextoffset)
+uint32_t fdt_next_tag(const void *fdt, int offset, int *nextoffset)
 {
 	const uint32_t *tagp, *lenp;
 	uint32_t tag;
@@ -143,7 +143,7 @@ const char *_fdt_find_string(const char *strtab, int tabsize, const char *s)
 
 int fdt_move(const void *fdt, void *buf, int bufsize)
 {
-	int err = _fdt_check_header(fdt);
+	int err = fdt_check_header(fdt);
 
 	if (err)
 		return err;

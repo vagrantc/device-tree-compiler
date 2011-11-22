@@ -49,22 +49,33 @@ int main(int argc, char *argv[])
 	fdt = xmalloc(SPACE);
 	CHECK(fdt_create(fdt, SPACE));
 
+	CHECK(fdt_add_reservemap_entry(fdt, TEST_ADDR_1, TEST_SIZE_1));
+	CHECK(fdt_add_reservemap_entry(fdt, TEST_ADDR_2, TEST_SIZE_2));
 	CHECK(fdt_finish_reservemap(fdt));
+
 	CHECK(fdt_begin_node(fdt, ""));
-	CHECK(fdt_property_typed(fdt, "prop-int", TEST_VALUE_1));
+	CHECK(fdt_property_string(fdt, "compatible", "test_tree1"));
+	CHECK(fdt_property_cell(fdt, "prop-int", TEST_VALUE_1));
 	CHECK(fdt_property_string(fdt, "prop-str", TEST_STRING_1));
 
-	CHECK(fdt_begin_node(fdt, "subnode1"));
-	CHECK(fdt_property_typed(fdt, "prop-int", TEST_VALUE_1));
+	CHECK(fdt_begin_node(fdt, "subnode@1"));
+	CHECK(fdt_property_string(fdt, "compatible", "subnode1"));
+	CHECK(fdt_property_cell(fdt, "prop-int", TEST_VALUE_1));
 	CHECK(fdt_begin_node(fdt, "subsubnode"));
-	CHECK(fdt_property_typed(fdt, "prop-int", TEST_VALUE_1));
+	CHECK(fdt_property(fdt, "compatible", "subsubnode1\0subsubnode",
+			   23));
+	CHECK(fdt_property_cell(fdt, "prop-int", TEST_VALUE_1));
 	CHECK(fdt_end_node(fdt));
 	CHECK(fdt_end_node(fdt));
 
-	CHECK(fdt_begin_node(fdt, "subnode2"));
-	CHECK(fdt_property_typed(fdt, "prop-int", TEST_VALUE_2));
-	CHECK(fdt_begin_node(fdt, "subsubnode"));
-	CHECK(fdt_property_typed(fdt, "prop-int", TEST_VALUE_2));
+	CHECK(fdt_begin_node(fdt, "subnode@2"));
+	CHECK(fdt_property_cell(fdt, "linux,phandle", PHANDLE_1));
+	CHECK(fdt_property_cell(fdt, "prop-int", TEST_VALUE_2));
+	CHECK(fdt_begin_node(fdt, "subsubnode@0"));
+	CHECK(fdt_property_cell(fdt, "linux,phandle", PHANDLE_2));
+	CHECK(fdt_property(fdt, "compatible", "subsubnode2\0subsubnode",
+			   23));
+	CHECK(fdt_property_cell(fdt, "prop-int", TEST_VALUE_2));
 	CHECK(fdt_end_node(fdt));
 	CHECK(fdt_end_node(fdt));
 

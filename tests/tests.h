@@ -108,26 +108,30 @@ static inline void *xrealloc(void *p, size_t size)
 	return p;
 }
 
+void check_mem_rsv(void *fdt, int n, uint64_t addr, uint64_t size);
+
 void check_property(void *fdt, int nodeoffset, const char *name,
 		    int len, const void *val);
-#define check_property_typed(fdt, nodeoffset, name, val) \
+#define check_property_cell(fdt, nodeoffset, name, val) \
 	({ \
-		typeof(val) x = val; \
+		uint32_t x = cpu_to_fdt32(val);			      \
 		check_property(fdt, nodeoffset, name, sizeof(x), &x); \
 	})
 
 
 const void *check_getprop(void *fdt, int nodeoffset, const char *name,
 			  int len, const void *val);
-#define check_getprop_typed(fdt, nodeoffset, name, val) \
+#define check_getprop_cell(fdt, nodeoffset, name, val) \
 	({ \
-		typeof(val) x = val; \
+		uint32_t x = cpu_to_fdt32(val);			     \
 		check_getprop(fdt, nodeoffset, name, sizeof(x), &x); \
 	})
 #define check_getprop_string(fdt, nodeoffset, name, s) \
 	check_getprop((fdt), (nodeoffset), (name), strlen(s)+1, (s))
-//void *load_blob(const char *filename);
+int nodename_eq(const char *s1, const char *s2);
+void *load_blob(const char *filename);
 void *load_blob_arg(int argc, char *argv[]);
 void save_blob(const char *filename, void *blob);
+void *open_blob_rw(void *blob);
 
 #endif /* _TESTS_H */

@@ -1,7 +1,7 @@
 /*
  * (C) Copyright David Gibson <dwg@au1.ibm.com>, IBM Corporation.  2005.
  *
- * 
+ *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License as
  * published by the Free Software Foundation; either version 2 of the
@@ -11,11 +11,11 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
  *  General Public License for more details.
- *                                                                       
- *  You should have received a copy of the GNU General Public License    
- *  along with this program; if not, write to the Free Software          
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 
- *                                                                   USA 
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307
+ *                                                                   USA
  */
 
 #include "dtc.h"
@@ -29,8 +29,9 @@
 int quiet;		/* Level of quietness */
 int reservenum;		/* Number of memory reservation slots */
 int minsize;		/* Minimum blob size */
+int padsize;		/* Additional padding to blob */
 
-char *join_path(char *path, char *name)
+char *join_path(const char *path, const char *name)
 {
 	int lenp = strlen(path);
 	int lenn = strlen(name);
@@ -54,10 +55,10 @@ char *join_path(char *path, char *name)
 	return str;
 }
 
-void fill_fullpaths(struct node *tree, char *prefix)
+void fill_fullpaths(struct node *tree, const char *prefix)
 {
 	struct node *child;
-	char *unit;
+	const char *unit;
 
 	tree->fullpath = join_path(prefix, tree->name);
 
@@ -71,7 +72,7 @@ void fill_fullpaths(struct node *tree, char *prefix)
 		fill_fullpaths(child, tree->fullpath);
 }
 
-static void usage(void)
+static void  __attribute__ ((noreturn)) usage(void)
 {
 	fprintf(stderr, "Usage:\n");
 	fprintf(stderr, "\tdtc [options] <input file>\n");
@@ -92,11 +93,13 @@ static void usage(void)
 	fprintf(stderr, "\t\t\tdtb - device tree blob\n");
 	fprintf(stderr, "\t\t\tasm - assembler source\n");
 	fprintf(stderr, "\t-V <output version>\n");
-	fprintf(stderr, "\t\tBlob version to produce, defaults to %d (relevant for dtb\n\t\tand asm output only)\n", OF_DEFAULT_VERSION);
+	fprintf(stderr, "\t\tBlob version to produce, defaults to %d (relevant for dtb\n\t\tand asm output only)\n", DEFAULT_FDT_VERSION);
 	fprintf(stderr, "\t-R <number>\n");
 	fprintf(stderr, "\t\tMake space for <number> reserve map entries (relevant for \n\t\tdtb and asm output only)\n");
 	fprintf(stderr, "\t-S <bytes>\n");
 	fprintf(stderr, "\t\tMake the blob at least <bytes> long (extra space)\n");
+	fprintf(stderr, "\t-p <bytes>\n");
+	fprintf(stderr, "\t\tAdd padding to the blob of <bytes> long (extra space)\n");
 	fprintf(stderr, "\t-b <number>\n");
 	fprintf(stderr, "\t\tSet the physical boot cpu\n");
 	fprintf(stderr, "\t-f\n");
@@ -109,22 +112,23 @@ static void usage(void)
 int main(int argc, char *argv[])
 {
 	struct boot_info *bi;
-	char *inform = "dts";
-	char *outform = "dts";
-	char *outname = "-";
-	int force = 0;
-	char *arg;
+	const char *inform = "dts";
+	const char *outform = "dts";
+	const char *outname = "-";
+	int force = 0, check = 0;
+	const char *arg;
 	int opt;
-	FILE *inf = NULL;
+	struct dtc_file *inf = NULL;
 	FILE *outf = NULL;
-	int outversion = OF_DEFAULT_VERSION;
+	int outversion = DEFAULT_FDT_VERSION;
 	int boot_cpuid_phys = 0xfeedbeef;
 
 	quiet      = 0;
 	reservenum = 0;
 	minsize    = 0;
+	padsize    = 0;
 
-	while ((opt = getopt(argc, argv, "hI:O:o:V:R:S:fqb:v")) != EOF) {
+	while ((opt = getopt(argc, argv, "hI:O:o:V:R:S:p:fcqb:v")) != EOF) {
 		switch (opt) {
 		case 'I':
 			inform = optarg;
@@ -144,8 +148,14 @@ int main(int argc, char *argv[])
 		case 'S':
 			minsize = strtol(optarg, NULL, 0);
 			break;
+		case 'p':
+			padsize = strtol(optarg, NULL, 0);
+			break;
 		case 'f':
 			force = 1;
+			break;
+		case 'c':
+			check = 1;
 			break;
 		case 'q':
 			quiet++;
@@ -169,6 +179,11 @@ int main(int argc, char *argv[])
 	else
 		arg = argv[optind];
 
+	/* minsize and padsize are mutually exclusive */
+	if ((minsize) && (padsize)) {
+		die("Can't set both -p and -S\n");
+	}
+
 	fprintf(stderr, "DTC: %s->%s  on file \"%s\"\n",
 		inform, outform, arg);
 
@@ -177,26 +192,23 @@ int main(int argc, char *argv[])
 	} else if (streq(inform, "fs")) {
 		bi = dt_from_fs(arg);
 	} else if(streq(inform, "dtb")) {
-		inf = dtc_open_file(arg);
-		bi = dt_from_blob(inf);
+		inf = dtc_open_file(arg, NULL);
+		if (!inf)
+			die("Couldn't open \"%s\": %s\n", arg,
+			    strerror(errno));
+
+		bi = dt_from_blob(inf->file);
 	} else {
 		die("Unknown input format \"%s\"\n", inform);
 	}
 
-	if (inf && (inf != stdin))
-		fclose(inf);
+	if (inf && inf->file != stdin)
+		fclose(inf->file);
 
-	if (! bi || ! bi->dt)
+	if (! bi || ! bi->dt || bi->error)
 		die("Couldn't read input tree\n");
 
-	if (! check_device_tree(bi->dt, outversion, boot_cpuid_phys)) {
-		if ((force) && (quiet < 3))
-			fprintf(stderr, "Input tree has errors, output forced\n");
-		if (! force) {
-			fprintf(stderr, "Input tree has errors, not writing output (use -f to force output)\n");
-			exit(1);
-		}
-	}
+	process_checks(force, bi);
 
 	if (streq(outname, "-")) {
 		outf = stdout;
@@ -218,6 +230,6 @@ int main(int argc, char *argv[])
 	} else {
 		die("Unknown output format \"%s\"\n", outform);
 	}
-		
+
 	exit(0);
 }
