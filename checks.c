@@ -242,32 +242,148 @@ static void check_duplicate_property_names(struct check *c, struct node *dt,
 }
 NODE_CHECK(duplicate_property_names, NULL, ERROR);
 
-static void check_explicit_phandles(struct check *c, struct node *root,
-					  struct node *node)
+#define LOWERCASE	"abcdefghijklmnopqrstuvwxyz"
+#define UPPERCASE	"ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+#define DIGITS		"0123456789"
+#define PROPNODECHARS	LOWERCASE UPPERCASE DIGITS ",._+*#?-"
+
+static void check_node_name_chars(struct check *c, struct node *dt,
+				  struct node *node)
 {
-	struct property *prop;
+	int n = strspn(node->name, c->data);
+
+	if (n < strlen(node->name))
+		FAIL(c, "Bad character '%c' in node %s",
+		     node->name[n], node->fullpath);
+}
+NODE_CHECK(node_name_chars, PROPNODECHARS "@", ERROR);
+
+static void check_node_name_format(struct check *c, struct node *dt,
+				   struct node *node)
+{
+	if (strchr(get_unitname(node), '@'))
+		FAIL(c, "Node %s has multiple '@' characters in name",
+		     node->fullpath);
+}
+NODE_CHECK(node_name_format, NULL, ERROR, &node_name_chars);
+
+static void check_property_name_chars(struct check *c, struct node *dt,
+				      struct node *node, struct property *prop)
+{
+	int n = strspn(prop->name, c->data);
+
+	if (n < strlen(prop->name))
+		FAIL(c, "Bad character '%c' in property name \"%s\", node %s",
+		     prop->name[n], prop->name, node->fullpath);
+}
+PROP_CHECK(property_name_chars, PROPNODECHARS, ERROR);
+
+#define DESCLABEL_FMT	"%s%s%s%s%s"
+#define DESCLABEL_ARGS(node,prop,mark)		\
+	((mark) ? "value of " : ""),		\
+	((prop) ? "'" : ""), \
+	((prop) ? (prop)->name : ""), \
+	((prop) ? "' in " : ""), (node)->fullpath
+
+static void check_duplicate_label(struct check *c, struct node *dt,
+				  const char *label, struct node *node,
+				  struct property *prop, struct marker *mark)
+{
+	struct node *othernode = NULL;
+	struct property *otherprop = NULL;
+	struct marker *othermark = NULL;
+
+	othernode = get_node_by_label(dt, label);
+
+	if (!othernode)
+		otherprop = get_property_by_label(dt, label, &othernode);
+	if (!othernode)
+		othermark = get_marker_label(dt, label, &othernode,
+					       &otherprop);
+
+	if (!othernode)
+		return;
+
+	if ((othernode != node) || (otherprop != prop) || (othermark != mark))
+		FAIL(c, "Duplicate label '%s' on " DESCLABEL_FMT
+		     " and " DESCLABEL_FMT,
+		     label, DESCLABEL_ARGS(node, prop, mark),
+		     DESCLABEL_ARGS(othernode, otherprop, othermark));
+}
+
+static void check_duplicate_label_node(struct check *c, struct node *dt,
+				       struct node *node)
+{
+	struct label *l;
+
+	for_each_label(node->labels, l)
+		check_duplicate_label(c, dt, l->label, node, NULL, NULL);
+}
+static void check_duplicate_label_prop(struct check *c, struct node *dt,
+				       struct node *node, struct property *prop)
+{
+	struct marker *m = prop->val.markers;
+	struct label *l;
+
+	for_each_label(prop->labels, l)
+		check_duplicate_label(c, dt, l->label, node, prop, NULL);
+
+	for_each_marker_of_type(m, LABEL)
+		check_duplicate_label(c, dt, m->ref, node, prop, m);
+}
+CHECK(duplicate_label, NULL, check_duplicate_label_node,
+      check_duplicate_label_prop, NULL, ERROR);
+
+static void check_explicit_phandles(struct check *c, struct node *root,
+				    struct node *node, struct property *prop)
+{
+	struct marker *m;
 	struct node *other;
 	cell_t phandle;
 
-	prop = get_property(node, "linux,phandle");
-	if (! prop)
-		return; /* No phandle, that's fine */
+	if (!streq(prop->name, "phandle")
+	    && !streq(prop->name, "linux,phandle"))
+		return;
 
 	if (prop->val.len != sizeof(cell_t)) {
-		FAIL(c, "%s has bad length (%d) linux,phandle property",
-		     node->fullpath, prop->val.len);
+		FAIL(c, "%s has bad length (%d) %s property",
+		     node->fullpath, prop->val.len, prop->name);
+		return;
+	}
+
+	m = prop->val.markers;
+	for_each_marker_of_type(m, REF_PHANDLE) {
+		assert(m->offset == 0);
+		if (node != get_node_by_ref(root, m->ref))
+			/* "Set this node's phandle equal to some
+			 * other node's phandle".  That's nonsensical
+			 * by construction. */ {
+			FAIL(c, "%s in %s is a reference to another node",
+			     prop->name, node->fullpath);
+			return;
+		}
+		/* But setting this node's phandle equal to its own
+		 * phandle is allowed - that means allocate a unique
+		 * phandle for this node, even if it's not otherwise
+		 * referenced.  The value will be filled in later, so
+		 * no further checking for now. */
 		return;
 	}
 
 	phandle = propval_cell(prop);
+
 	if ((phandle == 0) || (phandle == -1)) {
-		FAIL(c, "%s has invalid linux,phandle value 0x%x",
-		     node->fullpath, phandle);
+		FAIL(c, "%s has bad value (0x%x) in %s property",
+		     node->fullpath, phandle, prop->name);
 		return;
 	}
 
+	if (node->phandle && (node->phandle != phandle))
+		FAIL(c, "%s has %s property which replaces existing phandle information",
+		     node->fullpath, prop->name);
+
 	other = get_node_by_phandle(root, phandle);
-	if (other) {
+	if (other && (other != node)) {
 		FAIL(c, "%s has duplicated phandle 0x%x (seen before at %s)",
 		     node->fullpath, phandle, other->fullpath);
 		return;
@@ -275,21 +391,34 @@ static void check_explicit_phandles(struct check *c, struct node *root,
 
 	node->phandle = phandle;
 }
-NODE_CHECK(explicit_phandles, NULL, ERROR);
+PROP_CHECK(explicit_phandles, NULL, ERROR);
 
 static void check_name_properties(struct check *c, struct node *root,
 				  struct node *node)
 {
-	struct property *prop;
+	struct property **pp, *prop = NULL;
 
-	prop = get_property(node, "name");
+	for (pp = &node->proplist; *pp; pp = &((*pp)->next))
+		if (streq((*pp)->name, "name")) {
+			prop = *pp;
+			break;
+		}
+
 	if (!prop)
 		return; /* No name property, that's fine */
 
 	if ((prop->val.len != node->basenamelen+1)
-	    || (memcmp(prop->val.val, node->name, node->basenamelen) != 0))
+	    || (memcmp(prop->val.val, node->name, node->basenamelen) != 0)) {
 		FAIL(c, "\"name\" property in %s is incorrect (\"%s\" instead"
 		     " of base node name)", node->fullpath, prop->val.val);
+	} else {
+		/* The name property is correct, and therefore redundant.
+		 * Delete it */
+		*pp = prop->next;
+		free(prop->name);
+		data_free(prop->val);
+		free(prop);
+	}
 }
 CHECK_IS_STRING(name_is_string, "name", ERROR);
 NODE_CHECK(name_properties, NULL, ERROR, &name_is_string);
@@ -301,23 +430,23 @@ NODE_CHECK(name_properties, NULL, ERROR, &name_is_string);
 static void fixup_phandle_references(struct check *c, struct node *dt,
 				     struct node *node, struct property *prop)
 {
-      struct marker *m = prop->val.markers;
-      struct node *refnode;
-      cell_t phandle;
+	struct marker *m = prop->val.markers;
+	struct node *refnode;
+	cell_t phandle;
 
-      for_each_marker_of_type(m, REF_PHANDLE) {
-	      assert(m->offset + sizeof(cell_t) <= prop->val.len);
+	for_each_marker_of_type(m, REF_PHANDLE) {
+		assert(m->offset + sizeof(cell_t) <= prop->val.len);
 
-	      refnode = get_node_by_ref(dt, m->ref);
-	      if (! refnode) {
-		      FAIL(c, "Reference to non-existent node or label \"%s\"\n",
-			   m->ref);
-		      continue;
-	      }
+		refnode = get_node_by_ref(dt, m->ref);
+		if (! refnode) {
+			FAIL(c, "Reference to non-existent node or label \"%s\"\n",
+			     m->ref);
+			continue;
+		}
 
-	      phandle = get_node_phandle(dt, refnode);
-	      *((cell_t *)(prop->val.val + m->offset)) = cpu_to_be32(phandle);
-      }
+		phandle = get_node_phandle(dt, refnode);
+		*((cell_t *)(prop->val.val + m->offset)) = cpu_to_fdt32(phandle);
+	}
 }
 CHECK(phandle_references, NULL, NULL, fixup_phandle_references, NULL, ERROR,
       &duplicate_node_names, &explicit_phandles);
@@ -498,7 +627,11 @@ TREE_CHECK(obsolete_chosen_interrupt_controller, NULL, WARN);
 
 static struct check *check_table[] = {
 	&duplicate_node_names, &duplicate_property_names,
+	&node_name_chars, &node_name_format, &property_name_chars,
 	&name_is_string, &name_properties,
+
+	&duplicate_label,
+
 	&explicit_phandles,
 	&phandle_references, &path_references,
 

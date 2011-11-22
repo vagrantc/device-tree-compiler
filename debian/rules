@@ -8,7 +8,7 @@
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-export CFLAGS = -Wall -g
+export CFLAGS = -Wall -g -fPIC
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 	CFLAGS += -O0
@@ -38,7 +38,7 @@ clean1:
 install: build
 	dh_testdir
 	dh_testroot
-	dh_clean -k
+	dh_prep
 	dh_installdirs
 	install -m755 dtc $(CURDIR)/debian/device-tree-compiler/usr/bin
 	touch install-stamp

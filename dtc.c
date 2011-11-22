@@ -30,32 +30,9 @@ int quiet;		/* Level of quietness */
 int reservenum;		/* Number of memory reservation slots */
 int minsize;		/* Minimum blob size */
 int padsize;		/* Additional padding to blob */
+int phandle_format = PHANDLE_BOTH;	/* Use linux,phandle or phandle properties */
 
-char *join_path(const char *path, const char *name)
-{
-	int lenp = strlen(path);
-	int lenn = strlen(name);
-	int len;
-	int needslash = 1;
-	char *str;
-
-	len = lenp + lenn + 2;
-	if ((lenp > 0) && (path[lenp-1] == '/')) {
-		needslash = 0;
-		len--;
-	}
-
-	str = xmalloc(len);
-	memcpy(str, path, lenp);
-	if (needslash) {
-		str[lenp] = '/';
-		lenp++;
-	}
-	memcpy(str+lenp, name, lenn+1);
-	return str;
-}
-
-void fill_fullpaths(struct node *tree, const char *prefix)
+static void fill_fullpaths(struct node *tree, const char *prefix)
 {
 	struct node *child;
 	const char *unit;
@@ -104,9 +81,16 @@ static void  __attribute__ ((noreturn)) usage(void)
 	fprintf(stderr, "\t\tSet the physical boot cpu\n");
 	fprintf(stderr, "\t-f\n");
 	fprintf(stderr, "\t\tForce - try to produce output even if the input tree has errors\n");
+	fprintf(stderr, "\t-s\n");
+	fprintf(stderr, "\t\tSort nodes and properties before outputting (only useful for\n\t\tcomparing trees)\n");
 	fprintf(stderr, "\t-v\n");
 	fprintf(stderr, "\t\tPrint DTC version and exit\n");
-	exit(2);
+	fprintf(stderr, "\t-H <phandle format>\n");
+	fprintf(stderr, "\t\tphandle formats are:\n");
+	fprintf(stderr, "\t\t\tlegacy - \"linux,phandle\" properties only\n");
+	fprintf(stderr, "\t\t\tepapr - \"phandle\" properties only\n");
+	fprintf(stderr, "\t\t\tboth - Both \"linux,phandle\" and \"phandle\" properties\n");
+	exit(3);
 }
 
 int main(int argc, char *argv[])
@@ -115,20 +99,19 @@ int main(int argc, char *argv[])
 	const char *inform = "dts";
 	const char *outform = "dts";
 	const char *outname = "-";
-	int force = 0, check = 0;
+	int force = 0, check = 0, sort = 0;
 	const char *arg;
 	int opt;
-	struct dtc_file *inf = NULL;
 	FILE *outf = NULL;
 	int outversion = DEFAULT_FDT_VERSION;
-	int boot_cpuid_phys = 0xfeedbeef;
+	long long cmdline_boot_cpuid = -1;
 
 	quiet      = 0;
 	reservenum = 0;
 	minsize    = 0;
 	padsize    = 0;
 
-	while ((opt = getopt(argc, argv, "hI:O:o:V:R:S:p:fcqb:v")) != EOF) {
+	while ((opt = getopt(argc, argv, "hI:O:o:V:R:S:p:fcqb:vH:s")) != EOF) {
 		switch (opt) {
 		case 'I':
 			inform = optarg;
@@ -161,11 +144,27 @@ int main(int argc, char *argv[])
 			quiet++;
 			break;
 		case 'b':
-			boot_cpuid_phys = strtol(optarg, NULL, 0);
+			cmdline_boot_cpuid = strtoll(optarg, NULL, 0);
 			break;
 		case 'v':
-		    printf("Version: %s\n", DTC_VERSION);
-		    exit(0);
+			printf("Version: %s\n", DTC_VERSION);
+			exit(0);
+		case 'H':
+			if (streq(optarg, "legacy"))
+				phandle_format = PHANDLE_LEGACY;
+			else if (streq(optarg, "epapr"))
+				phandle_format = PHANDLE_EPAPR;
+			else if (streq(optarg, "both"))
+				phandle_format = PHANDLE_BOTH;
+			else
+				die("Invalid argument \"%s\" to -H option\n",
+				    optarg);
+			break;
+
+		case 's':
+			sort = 1;
+			break;
+
 		case 'h':
 		default:
 			usage();
@@ -180,35 +179,32 @@ int main(int argc, char *argv[])
 		arg = argv[optind];
 
 	/* minsize and padsize are mutually exclusive */
-	if ((minsize) && (padsize)) {
+	if (minsize && padsize)
 		die("Can't set both -p and -S\n");
-	}
+
+	if (minsize)
+		fprintf(stderr, "DTC: Use of \"-S\" is deprecated; it will be removed soon, use \"-p\" instead\n");
 
 	fprintf(stderr, "DTC: %s->%s  on file \"%s\"\n",
 		inform, outform, arg);
 
-	if (streq(inform, "dts")) {
+	if (streq(inform, "dts"))
 		bi = dt_from_source(arg);
-	} else if (streq(inform, "fs")) {
+	else if (streq(inform, "fs"))
 		bi = dt_from_fs(arg);
-	} else if(streq(inform, "dtb")) {
-		inf = dtc_open_file(arg, NULL);
-		if (!inf)
-			die("Couldn't open \"%s\": %s\n", arg,
-			    strerror(errno));
-
-		bi = dt_from_blob(inf->file);
-	} else {
+	else if(streq(inform, "dtb"))
+		bi = dt_from_blob(arg);
+	else
 		die("Unknown input format \"%s\"\n", inform);
-	}
 
-	if (inf && inf->file != stdin)
-		fclose(inf->file);
+	if (cmdline_boot_cpuid != -1)
+		bi->boot_cpuid_phys = cmdline_boot_cpuid;
 
-	if (! bi || ! bi->dt || bi->error)
-		die("Couldn't read input tree\n");
-
+	fill_fullpaths(bi->dt, "");
 	process_checks(force, bi);
+
+	if (sort)
+		sort_tree(bi);
 
 	if (streq(outname, "-")) {
 		outf = stdout;
@@ -222,9 +218,9 @@ int main(int argc, char *argv[])
 	if (streq(outform, "dts")) {
 		dt_to_source(outf, bi);
 	} else if (streq(outform, "dtb")) {
-		dt_to_blob(outf, bi, outversion, boot_cpuid_phys);
+		dt_to_blob(outf, bi, outversion);
 	} else if (streq(outform, "asm")) {
-		dt_to_asm(outf, bi, outversion, boot_cpuid_phys);
+		dt_to_asm(outf, bi, outversion);
 	} else if (streq(outform, "null")) {
 		/* do nothing */
 	} else {

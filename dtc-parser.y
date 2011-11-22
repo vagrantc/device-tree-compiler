@@ -18,18 +18,22 @@
  *                                                                   USA
  */
 
-%locations
-
 %{
+#include <stdio.h>
+
 #include "dtc.h"
 #include "srcpos.h"
 
-int yylex(void);
-unsigned long long eval_literal(const char *s, int base, int bits);
+YYLTYPE yylloc;
+
+extern int yylex(void);
+extern void print_error(char const *fmt, ...);
+extern void yyerror(char const *s);
 
 extern struct boot_info *the_boot_info;
 extern int treesource_error;
 
+static unsigned long long eval_literal(const char *s, int base, int bits);
 %}
 
 %union {
@@ -37,10 +41,10 @@ extern int treesource_error;
 	char *literal;
 	char *labelref;
 	unsigned int cbase;
-	u8 byte;
+	uint8_t byte;
 	struct data data;
 
-	u64 addr;
+	uint64_t addr;
 	cell_t cell;
 	struct property *prop;
 	struct property *proplist;
@@ -53,22 +57,19 @@ extern int treesource_error;
 %token DT_MEMRESERVE
 %token <propnodename> DT_PROPNODENAME
 %token <literal> DT_LITERAL
-%token <literal> DT_LEGACYLITERAL
 %token <cbase> DT_BASE
 %token <byte> DT_BYTE
 %token <data> DT_STRING
 %token <labelref> DT_LABEL
 %token <labelref> DT_REF
+%token DT_INCBIN
 
 %type <data> propdata
 %type <data> propdataprefix
 %type <re> memreserve
 %type <re> memreserves
-%type <re> v0_memreserve
-%type <re> v0_memreserves
 %type <addr> addr
 %type <data> celllist
-%type <cbase> cellbase
 %type <cell> cellval
 %type <data> bytestring
 %type <prop> propdef
@@ -78,18 +79,14 @@ extern int treesource_error;
 %type <node> nodedef
 %type <node> subnode
 %type <nodelist> subnodes
-%type <labelref> label
 
 %%
 
 sourcefile:
 	  DT_V1 ';' memreserves devicetree
 		{
-			the_boot_info = build_boot_info($3, $4);
-		}
-	| v0_memreserves devicetree
-		{
-			the_boot_info = build_boot_info($1, $2);
+			the_boot_info = build_boot_info($3, $4,
+							guess_boot_cpuid($4));
 		}
 	;
 
@@ -105,31 +102,14 @@ memreserves:
 	;
 
 memreserve:
-	  label DT_MEMRESERVE addr addr ';'
+	  DT_MEMRESERVE addr addr ';'
 		{
-			$$ = build_reserve_entry($3, $4, $1);
+			$$ = build_reserve_entry($2, $3);
 		}
-	;
-
-v0_memreserves:
-	  /* empty */
+	| DT_LABEL memreserve
 		{
-			$$ = NULL;
-		}
-	| v0_memreserve v0_memreserves
-		{
-			$$ = chain_reserve_entry($1, $2);
-		};
-	;
-
-v0_memreserve:
-	  memreserve
-		{
-			$$ = $1;
-		}
-	| label DT_MEMRESERVE addr '-' addr ';'
-		{
-			$$ = build_reserve_entry($3, $5 - $3 + 1, $1);
+			add_label(&$2->labels, $1);
+			$$ = $2;
 		}
 	;
 
@@ -138,16 +118,26 @@ addr:
 		{
 			$$ = eval_literal($1, 0, 64);
 		}
-	| DT_LEGACYLITERAL
-		{
-			$$ = eval_literal($1, 16, 64);
-		}
 	  ;
 
 devicetree:
 	  '/' nodedef
 		{
-			$$ = name_node($2, "", NULL);
+			$$ = name_node($2, "");
+		}
+	| devicetree '/' nodedef
+		{
+			$$ = merge_nodes($1, $3);
+		}
+	| devicetree DT_REF nodedef
+		{
+			struct node *target = get_node_by_ref($1, $2);
+
+			if (target)
+				merge_nodes(target, $3);
+			else
+				print_error("label or path, '%s', not found", $2);
+			$$ = $1;
 		}
 	;
 
@@ -170,13 +160,18 @@ proplist:
 	;
 
 propdef:
-	  label DT_PROPNODENAME '=' propdata ';'
+	  DT_PROPNODENAME '=' propdata ';'
 		{
-			$$ = build_property($2, $4, $1);
+			$$ = build_property($1, $3);
 		}
-	| label DT_PROPNODENAME ';'
+	| DT_PROPNODENAME ';'
 		{
-			$$ = build_property($2, empty_data, $1);
+			$$ = build_property($1, empty_data);
+		}
+	| DT_LABEL propdef
+		{
+			add_label(&$2->labels, $1);
+			$$ = $2;
 		}
 	;
 
@@ -196,6 +191,33 @@ propdata:
 	| propdataprefix DT_REF
 		{
 			$$ = data_add_marker($1, REF_PATH, $2);
+		}
+	| propdataprefix DT_INCBIN '(' DT_STRING ',' addr ',' addr ')'
+		{
+			FILE *f = srcfile_relative_open($4.val, NULL);
+			struct data d;
+
+			if ($6 != 0)
+				if (fseek(f, $6, SEEK_SET) != 0)
+					print_error("Couldn't seek to offset %llu in \"%s\": %s",
+						     (unsigned long long)$6,
+						     $4.val,
+						     strerror(errno));
+
+			d = data_copy_file(f, $8);
+
+			$$ = data_merge($1, d);
+			fclose(f);
+		}
+	| propdataprefix DT_INCBIN '(' DT_STRING ')'
+		{
+			FILE *f = srcfile_relative_open($4.val, NULL);
+			struct data d = empty_data;
+
+			d = data_copy_file(f, -1);
+
+			$$ = data_merge($1, d);
+			fclose(f);
 		}
 	| propdata DT_LABEL
 		{
@@ -238,22 +260,10 @@ celllist:
 		}
 	;
 
-cellbase:
-	  /* empty */
-		{
-			$$ = 16;
-		}
-	| DT_BASE
-	;
-
 cellval:
 	  DT_LITERAL
 		{
 			$$ = eval_literal($1, 0, 32);
-		}
-	| cellbase DT_LEGACYLITERAL
-		{
-			$$ = eval_literal($2, $1, 32);
 		}
 	;
 
@@ -277,60 +287,47 @@ subnodes:
 		{
 			$$ = NULL;
 		}
-	|  subnode subnodes
+	| subnode subnodes
 		{
 			$$ = chain_node($1, $2);
 		}
 	| subnode propdef
 		{
-			yyerror("syntax error: properties must precede subnodes");
+			print_error("syntax error: properties must precede subnodes");
 			YYERROR;
 		}
 	;
 
 subnode:
-	  label DT_PROPNODENAME nodedef
+	  DT_PROPNODENAME nodedef
 		{
-			$$ = name_node($3, $2, $1);
+			$$ = name_node($2, $1);
 		}
-	;
-
-label:
-	  /* empty */
+	| DT_LABEL subnode
 		{
-			$$ = NULL;
-		}
-	| DT_LABEL
-		{
-			$$ = $1;
+			add_label(&$2->labels, $1);
+			$$ = $2;
 		}
 	;
 
 %%
 
-void yyerrorf(char const *s, ...)
+void print_error(char const *fmt, ...)
 {
-	const char *fname = srcpos_file ? srcpos_file->name : "<no-file>";
 	va_list va;
-	va_start(va, s);
 
-	if (strcmp(fname, "-") == 0)
-		fname = "stdin";
-
-	fprintf(stderr, "%s:%d ", fname, yylloc.first_line);
-	vfprintf(stderr, s, va);
-	fprintf(stderr, "\n");
+	va_start(va, fmt);
+	srcpos_verror(&yylloc, fmt, va);
+	va_end(va);
 
 	treesource_error = 1;
-	va_end(va);
 }
 
-void yyerror (char const *s)
-{
-	yyerrorf("%s", s);
+void yyerror(char const *s) {
+	print_error("%s", s);
 }
 
-unsigned long long eval_literal(const char *s, int base, int bits)
+static unsigned long long eval_literal(const char *s, int base, int bits)
 {
 	unsigned long long val;
 	char *e;
@@ -338,11 +335,11 @@ unsigned long long eval_literal(const char *s, int base, int bits)
 	errno = 0;
 	val = strtoull(s, &e, base);
 	if (*e)
-		yyerror("bad characters in literal");
+		print_error("bad characters in literal");
 	else if ((errno == ERANGE)
 		 || ((bits < 64) && (val >= (1ULL << bits))))
-		yyerror("literal out of range");
+		print_error("literal out of range");
 	else if (errno != 0)
-		yyerror("bad literal");
+		print_error("bad literal");
 	return val;
 }
