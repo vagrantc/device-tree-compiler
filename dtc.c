@@ -19,6 +19,16 @@
  */
 
 #include "dtc.h"
+#include "srcpos.h"
+
+#include "version_gen.h"
+
+/*
+ * Command line options
+ */
+int quiet;		/* Level of quietness */
+int reservenum;		/* Number of memory reservation slots */
+int minsize;		/* Minimum blob size */
 
 char *join_path(char *path, char *name)
 {
@@ -61,44 +71,38 @@ void fill_fullpaths(struct node *tree, char *prefix)
 		fill_fullpaths(child, tree->fullpath);
 }
 
-static FILE *dtc_open_file(char *fname)
-{
-	FILE *f;
-
-	if (streq(fname, "-"))
-		f = stdin;
-	else
-		f = fopen(fname, "r");
-
-	if (! f)
-		die("Couldn't open \"%s\": %s\n", fname, strerror(errno));
-
-	return f;
-}
-
 static void usage(void)
 {
 	fprintf(stderr, "Usage:\n");
 	fprintf(stderr, "\tdtc [options] <input file>\n");
 	fprintf(stderr, "\nOptions:\n");
+	fprintf(stderr, "\t-h\n");
+	fprintf(stderr, "\t\tThis help text\n");
+	fprintf(stderr, "\t-q\n");
+	fprintf(stderr, "\t\tQuiet: -q suppress warnings, -qq errors, -qqq all\n");
 	fprintf(stderr, "\t-I <input format>\n");
 	fprintf(stderr, "\t\tInput formats are:\n");
 	fprintf(stderr, "\t\t\tdts - device tree source text\n");
 	fprintf(stderr, "\t\t\tdtb - device tree blob\n");
 	fprintf(stderr, "\t\t\tfs - /proc/device-tree style directory\n");
+	fprintf(stderr, "\t-o <output file>\n");
 	fprintf(stderr, "\t-O <output format>\n");
 	fprintf(stderr, "\t\tOutput formats are:\n");
 	fprintf(stderr, "\t\t\tdts - device tree source text\n");
 	fprintf(stderr, "\t\t\tdtb - device tree blob\n");
 	fprintf(stderr, "\t\t\tasm - assembler source\n");
 	fprintf(stderr, "\t-V <output version>\n");
-	fprintf(stderr, "\t\tBlob version to produce, defaults to 16 (relevant for dtb\n\t\tand asm output only)\n");
+	fprintf(stderr, "\t\tBlob version to produce, defaults to %d (relevant for dtb\n\t\tand asm output only)\n", OF_DEFAULT_VERSION);
 	fprintf(stderr, "\t-R <number>\n");
 	fprintf(stderr, "\t\tMake space for <number> reserve map entries (relevant for \n\t\tdtb and asm output only)\n");
+	fprintf(stderr, "\t-S <bytes>\n");
+	fprintf(stderr, "\t\tMake the blob at least <bytes> long (extra space)\n");
 	fprintf(stderr, "\t-b <number>\n");
 	fprintf(stderr, "\t\tSet the physical boot cpu\n");
 	fprintf(stderr, "\t-f\n");
 	fprintf(stderr, "\t\tForce - try to produce output even if the input tree has errors\n");
+	fprintf(stderr, "\t-v\n");
+	fprintf(stderr, "\t\tPrint DTC version and exit\n");
 	exit(2);
 }
 
@@ -113,11 +117,14 @@ int main(int argc, char *argv[])
 	int opt;
 	FILE *inf = NULL;
 	FILE *outf = NULL;
-	int outversion = 0x10;
-	int reservenum = 1;
+	int outversion = OF_DEFAULT_VERSION;
 	int boot_cpuid_phys = 0xfeedbeef;
 
-	while ((opt = getopt(argc, argv, "I:O:o:V:R:fb:")) != EOF) {
+	quiet      = 0;
+	reservenum = 0;
+	minsize    = 0;
+
+	while ((opt = getopt(argc, argv, "hI:O:o:V:R:S:fqb:v")) != EOF) {
 		switch (opt) {
 		case 'I':
 			inform = optarg;
@@ -134,12 +141,22 @@ int main(int argc, char *argv[])
 		case 'R':
 			reservenum = strtol(optarg, NULL, 0);
 			break;
+		case 'S':
+			minsize = strtol(optarg, NULL, 0);
+			break;
 		case 'f':
 			force = 1;
+			break;
+		case 'q':
+			quiet++;
 			break;
 		case 'b':
 			boot_cpuid_phys = strtol(optarg, NULL, 0);
 			break;
+		case 'v':
+		    printf("Version: %s\n", DTC_VERSION);
+		    exit(0);
+		case 'h':
 		default:
 			usage();
 		}
@@ -156,8 +173,7 @@ int main(int argc, char *argv[])
 		inform, outform, arg);
 
 	if (streq(inform, "dts")) {
-		inf = dtc_open_file(arg);
-		bi = dt_from_source(inf);
+		bi = dt_from_source(arg);
 	} else if (streq(inform, "fs")) {
 		bi = dt_from_fs(arg);
 	} else if(streq(inform, "dtb")) {
@@ -174,9 +190,12 @@ int main(int argc, char *argv[])
 		die("Couldn't read input tree\n");
 
 	if (! check_device_tree(bi->dt, outversion, boot_cpuid_phys)) {
-		fprintf(stderr, "Input tree has errors\n");
-		if (! force)
+		if ((force) && (quiet < 3))
+			fprintf(stderr, "Input tree has errors, output forced\n");
+		if (! force) {
+			fprintf(stderr, "Input tree has errors, not writing output (use -f to force output)\n");
 			exit(1);
+		}
 	}
 
 	if (streq(outname, "-")) {

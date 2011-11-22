@@ -23,9 +23,9 @@
 
 %{
 #include "dtc.h"
+#include "srcpos.h"
 
 int yylex(void);
-void yyerror(char const *);
 cell_t cell_from_string(char *s, unsigned int base);
 
 extern struct boot_info *the_boot_info;
@@ -92,11 +92,11 @@ memreserves:	memreserve memreserves {
 		}
 	;
 
-memreserve:	DT_MEMRESERVE DT_ADDR DT_ADDR ';' {
-			$$ = build_reserve_entry($2, $3, NULL);
+memreserve:	label DT_MEMRESERVE DT_ADDR DT_ADDR ';' {
+			$$ = build_reserve_entry($3, $4, $1);
 		}
-	|	DT_MEMRESERVE DT_ADDR '-' DT_ADDR ';' {
-			$$ = build_reserve_entry($2, $4 - $2 + 1, NULL);
+	|	label DT_MEMRESERVE DT_ADDR '-' DT_ADDR ';' {
+			$$ = build_reserve_entry($3, $5 - $3 + 1, $1);
 		}
 	;
 
@@ -131,9 +131,11 @@ propdata:	propdataprefix DT_STRING { $$ = data_merge($1, $2); }
 			$$ = data_merge(data_append_align($1, sizeof(cell_t)), $3);
 		}
 	|	propdataprefix '[' bytestring ']' { $$ = data_merge($1, $3); }
+	|	propdata DT_LABEL { $$ = data_add_label($1, $2); }
 	;
 
 propdataprefix:	propdata ',' { $$ = $1; }
+	|	propdataprefix DT_LABEL { $$ = data_add_label($1, $2); }
 	|	/* empty */ { $$ = empty_data; }
 	;
 
@@ -150,10 +152,12 @@ celllist:	celllist opt_cell_base DT_CELL {
 	|	celllist DT_REF	{
 			$$ = data_append_cell(data_add_fixup($1, $2), -1);
 		}
+	|	celllist DT_LABEL { $$ = data_add_label($1, $2); }
 	|	/* empty */ { $$ = empty_data; }
 	;
 
 bytestring:	bytestring DT_BYTE { $$ = data_append_byte($1, $2); }
+	|	bytestring DT_LABEL { $$ = data_add_label($1, $2); }
 	|	/* empty */ { $$ = empty_data; }
 	;
 
@@ -178,7 +182,13 @@ label:		DT_LABEL	{ $$ = $1; }
 
 void yyerror (char const *s)
 {
-	fprintf (stderr, "%s at line %d\n", s, yylloc.first_line);
+	const char *fname = srcpos_filename_for_num(yylloc.filenum);
+
+	if (strcmp(fname, "-") == 0)
+		fname = "stdin";
+
+	fprintf(stderr, "%s:%d %s\n",
+		fname, yylloc.first_line, s);
 }
 
 
@@ -186,19 +196,27 @@ void yyerror (char const *s)
  * Convert a string representation of a numeric cell
  * in the given base into a cell.
  *
- * FIXME: The string "abc123", base 10, should be flagged
- *        as an error due to the leading "a", but isn't yet.
+ * FIXME: should these specification errors be fatal instead?
  */
 
 cell_t cell_from_string(char *s, unsigned int base)
 {
 	cell_t c;
+	char *e;
 
-	c = strtoul(s, NULL, base);
+	c = strtoul(s, &e, base);
+	if (*e) {
+		fprintf(stderr,
+			"Line %d: Invalid cell value '%s' : "
+			"%c is not a base %d digit; %d assumed\n",
+			yylloc.first_line, s, *e, base, c);
+	}
+
 	if (errno == EINVAL || errno == ERANGE) {
 		fprintf(stderr,
 			"Line %d: Invalid cell value '%s'; %d assumed\n",
 			yylloc.first_line, s, c);
+		errno = 0;
 	}
 
 	return c;

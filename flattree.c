@@ -26,6 +26,8 @@
 #define FTF_NAMEPROPS	0x4
 #define FTF_BOOTCPUID	0x8
 #define FTF_STRTABSIZE	0x10
+#define FTF_STRUCTSIZE	0x20
+#define FTF_NOPS	0x40
 
 static struct version_info {
 	int version;
@@ -39,8 +41,10 @@ static struct version_info {
 	 FTF_FULLPATH|FTF_VARALIGN|FTF_NAMEPROPS|FTF_BOOTCPUID},
 	{3, 1, BPH_V3_SIZE,
 	 FTF_FULLPATH|FTF_VARALIGN|FTF_NAMEPROPS|FTF_BOOTCPUID|FTF_STRTABSIZE},
-	{0x10, 0x10, BPH_V3_SIZE,
-	 FTF_BOOTCPUID|FTF_STRTABSIZE},
+	{16, 16, BPH_V3_SIZE,
+	 FTF_BOOTCPUID|FTF_STRTABSIZE|FTF_NOPS},
+	{17, 16, BPH_V17_SIZE,
+	 FTF_BOOTCPUID|FTF_STRTABSIZE|FTF_STRUCTSIZE|FTF_NOPS},
 };
 
 struct emitter {
@@ -117,6 +121,12 @@ static void emit_label(FILE *f, char *prefix, char *label)
 	fprintf(f, "_%s_%s:\n", prefix, label);
 }
 
+static void emit_offset_label(FILE *f, char *label, int offset)
+{
+	fprintf(f, "\t.globl\t%s\n", label);
+	fprintf(f, "%s\t= . + %d\n", label, offset);
+}
+
 static void asm_emit_cell(void *e, cell_t val)
 {
 	FILE *f = e;
@@ -153,6 +163,13 @@ static void asm_emit_data(void *e, struct data d)
 {
 	FILE *f = e;
 	int off = 0;
+	struct fixup *l;
+
+	l = d.labels;
+	while (l) {
+		emit_offset_label(f, l->ref, l->offset);
+		l = l->next;
+	}
 
 	while ((d.len - off) >= sizeof(u32)) {
 		fprintf(f, "\t.long\t0x%x\n",
@@ -292,13 +309,22 @@ static struct data flatten_reserve_list(struct reserve_info *reservelist,
 {
 	struct reserve_info *re;
 	struct data d = empty_data;
+	static struct reserve_entry null_re = {0,0};
+	int    j;
 
 	for (re = reservelist; re; re = re->next) {
 		d = data_append_re(d, &re->re);
 	}
-	
+	/*
+	 * Add additional reserved slots if the user asked for them.
+	 */
+	for (j = 0; j < reservenum; j++) {
+		d = data_append_re(d, &null_re);
+	}
+
 	return d;
 }
+
 static void make_bph(struct boot_param_header *bph,
 		     struct version_info *vi,
 		     int reservesize, int dtsize, int strsize,
@@ -321,13 +347,14 @@ static void make_bph(struct boot_param_header *bph,
 	bph->off_dt_struct = cpu_to_be32(reserve_off + reservesize);
 	bph->off_dt_strings = cpu_to_be32(reserve_off + reservesize
 					  + dtsize);
-	bph->totalsize = cpu_to_be32(reserve_off + reservesize
-				     + dtsize + strsize);
-		
+	bph->totalsize = cpu_to_be32(reserve_off + reservesize + dtsize + strsize);
+
 	if (vi->flags & FTF_BOOTCPUID)
 		bph->boot_cpuid_phys = cpu_to_be32(boot_cpuid_phys);
 	if (vi->flags & FTF_STRTABSIZE)
 		bph->size_dt_strings = cpu_to_be32(strsize);
+	if (vi->flags & FTF_STRUCTSIZE)
+		bph->size_dt_struct = cpu_to_be32(dtsize);
 }
 
 void dt_to_blob(FILE *f, struct boot_info *bi, int version,
@@ -335,11 +362,12 @@ void dt_to_blob(FILE *f, struct boot_info *bi, int version,
 {
 	struct version_info *vi = NULL;
 	int i;
-	struct data dtbuf = empty_data;
-	struct data strbuf = empty_data;
-	struct data reservebuf;
+	struct data blob       = empty_data;
+	struct data reservebuf = empty_data;
+	struct data dtbuf      = empty_data;
+	struct data strbuf     = empty_data;
 	struct boot_param_header bph;
-	struct reserve_entry termre = {.address = 0, .size = 0};
+	int padlen;
 
 	for (i = 0; i < ARRAY_SIZE(version_table); i++) {
 		if (version_table[i].version == version)
@@ -347,9 +375,6 @@ void dt_to_blob(FILE *f, struct boot_info *bi, int version,
 	}
 	if (!vi)
 		die("Unknown device tree blob version %d\n", version);
-
-	dtbuf = empty_data;
-	strbuf = empty_data;
 
 	flatten_tree(bi->dt, &bin_emitter, &dtbuf, &strbuf, vi);
 	bin_emit_cell(&dtbuf, OF_DT_END);
@@ -360,28 +385,49 @@ void dt_to_blob(FILE *f, struct boot_info *bi, int version,
 	make_bph(&bph, vi, reservebuf.len, dtbuf.len, strbuf.len,
 		 boot_cpuid_phys);
 
-	fwrite(&bph, vi->hdr_size, 1, f);
-
-	/* Align the reserve map to an 8 byte boundary */
-	for (i = vi->hdr_size; i < be32_to_cpu(bph.off_mem_rsvmap); i++)
-		fputc(0, f);
+	/*
+	 * If the user asked for more space than is used, adjust the totalsize.
+	 */
+	padlen = minsize - be32_to_cpu(bph.totalsize);
+	if (padlen > 0) {
+		bph.totalsize = cpu_to_be32(minsize);
+	} else {
+		if ((minsize > 0) && (quiet < 1))
+			fprintf(stderr,
+				"Warning: blob size %d >= minimum size %d\n",
+				be32_to_cpu(bph.totalsize), minsize);
+	}
 
 	/*
-	 * Reserve map entries.
-	 * Each entry is an (address, size) pair of u64 values.
-	 * Always supply a zero-sized temination entry.
+	 * Assemble the blob: start with the header, add with alignment
+	 * the reserve buffer, add the reserve map terminating zeroes,
+	 * the device tree itself, and finally the strings.
 	 */
-	fwrite(reservebuf.val, reservebuf.len, 1, f);
-	fwrite(&termre, sizeof(termre), 1, f);
+	blob = data_append_data(blob, &bph, sizeof(bph));
+	blob = data_append_align(blob, 8);
+	blob = data_merge(blob, reservebuf);
+	blob = data_append_zeroes(blob, sizeof(struct reserve_entry));
+	blob = data_merge(blob, dtbuf);
+	blob = data_merge(blob, strbuf);
 
-	fwrite(dtbuf.val, dtbuf.len, 1, f);
-	fwrite(strbuf.val, strbuf.len, 1, f);
+	/*
+	 * If the user asked for more space than is used, pad out the blob.
+	 */
+	if (padlen > 0) {
+		blob = data_append_zeroes(blob, padlen);
+		bph.totalsize = cpu_to_be32(minsize);
+	}
+
+	fwrite(blob.val, blob.len, 1, f);
 
 	if (ferror(f))
 		die("Error writing device tree blob: %s\n", strerror(errno));
 
-	data_free(dtbuf);
-	data_free(strbuf);
+	/*
+	 * data_merge() frees the right-hand element so only the blob
+	 * remains to be freed.
+	 */
+	data_free(blob);
 }
 
 static void dump_stringtable_asm(FILE *f, struct data strbuf)
@@ -423,25 +469,29 @@ void dt_to_asm(FILE *f, struct boot_info *bi, int version, int boot_cpuid_phys)
 
 	emit_label(f, symprefix, "blob_start");
 	emit_label(f, symprefix, "header");
-	fprintf(f, "\t.long\tOF_DT_HEADER /* magic */\n");
-	fprintf(f, "\t.long\t_%s_blob_end - _%s_blob_start /* totalsize */\n",
+	fprintf(f, "\t.long\tOF_DT_HEADER\t\t\t\t/* magic */\n");
+	fprintf(f, "\t.long\t_%s_blob_abs_end - _%s_blob_start\t/* totalsize */\n",
 		symprefix, symprefix);
-	fprintf(f, "\t.long\t_%s_struct_start - _%s_blob_start /* off_dt_struct */\n",
+	fprintf(f, "\t.long\t_%s_struct_start - _%s_blob_start\t/* off_dt_struct */\n",
 		symprefix, symprefix);
-	fprintf(f, "\t.long\t_%s_strings_start - _%s_blob_start /* off_dt_strings */\n",
+	fprintf(f, "\t.long\t_%s_strings_start - _%s_blob_start\t/* off_dt_strings */\n",
 		symprefix, symprefix);
-	fprintf(f, "\t.long\t_%s_reserve_map - _%s_blob_start /* off_dt_strings */\n",
+	fprintf(f, "\t.long\t_%s_reserve_map - _%s_blob_start\t/* off_dt_strings */\n",
 		symprefix, symprefix);
-	fprintf(f, "\t.long\t%d /* version */\n", vi->version);
-	fprintf(f, "\t.long\t%d /* last_comp_version */\n",
+	fprintf(f, "\t.long\t%d\t\t\t\t\t/* version */\n", vi->version);
+	fprintf(f, "\t.long\t%d\t\t\t\t\t/* last_comp_version */\n",
 		vi->last_comp_version);
 
 	if (vi->flags & FTF_BOOTCPUID)
-		fprintf(f, "\t.long\t%i\t/*boot_cpuid_phys*/\n",
+		fprintf(f, "\t.long\t%i\t\t\t\t\t/* boot_cpuid_phys */\n",
 			boot_cpuid_phys);
 
 	if (vi->flags & FTF_STRTABSIZE)
 		fprintf(f, "\t.long\t_%s_strings_end - _%s_strings_start\t/* size_dt_strings */\n",
+			symprefix, symprefix);
+
+	if (vi->flags & FTF_STRUCTSIZE)
+		fprintf(f, "\t.long\t_%s_struct_end - _%s_struct_start\t/* size_dt_struct */\n",
 			symprefix, symprefix);
 
 	/*
@@ -460,12 +510,19 @@ void dt_to_asm(FILE *f, struct boot_info *bi, int version, int boot_cpuid_phys)
 	 * as it appears .quad isn't available in some assemblers.
 	 */
 	for (re = bi->reservelist; re; re = re->next) {
-		fprintf(f, "\t.long\t0x%08x\n\t.long\t0x%08x\n",
+		if (re->label) {
+			fprintf(f, "\t.globl\t%s\n", re->label);
+			fprintf(f, "%s:\n", re->label);
+		}
+		fprintf(f, "\t.long\t0x%08x, 0x%08x\n",
 			(unsigned int)(re->re.address >> 32),
 			(unsigned int)(re->re.address & 0xffffffff));
-		fprintf(f, "\t.long\t0x%08x\n\t.long\t0x%08x\n",
+		fprintf(f, "\t.long\t0x%08x, 0x%08x\n",
 			(unsigned int)(re->re.size >> 32),
 			(unsigned int)(re->re.size & 0xffffffff));
+	}
+	for (i = 0; i < reservenum; i++) {
+		fprintf(f, "\t.long\t0, 0\n\t.long\t0, 0\n");
 	}
 
 	fprintf(f, "\t.long\t0, 0\n\t.long\t0, 0\n");
@@ -480,6 +537,15 @@ void dt_to_asm(FILE *f, struct boot_info *bi, int version, int boot_cpuid_phys)
 	emit_label(f, symprefix, "strings_end");
 
 	emit_label(f, symprefix, "blob_end");
+
+	/*
+	 * If the user asked for more space than is used, pad it out.
+	 */
+	if (minsize > 0) {
+		fprintf(f, "\t.space\t%d - (_%s_blob_end - _%s_blob_start), 0\n",
+			minsize, symprefix, symprefix);
+	}
+	emit_label(f, symprefix, "blob_abs_end");
 
 	data_free(strbuf);
 }
@@ -730,6 +796,14 @@ static struct node *unflatten_tree(struct inbuf *dtbuf,
 			die("Premature OF_DT_END in device tree blob\n");
 			break;
 
+		case OF_DT_NOP:
+			if (!(flags & FTF_NOPS))
+				fprintf(stderr, "Warning: NOP tag found in flat tree"
+					" version <16\n");
+
+			/* Ignore */
+			break;
+
 		default:
 			die("Invalid opcode word %08x in device tree blob\n",
 			    val);
@@ -742,7 +816,7 @@ static struct node *unflatten_tree(struct inbuf *dtbuf,
 
 struct boot_info *dt_from_blob(FILE *f)
 {
-	u32 magic, totalsize, version, size_str;
+	u32 magic, totalsize, version, size_str, size_dt;
 	u32 off_dt, off_str, off_mem_rsvmap;
 	int rc;
 	char *blob;
@@ -841,9 +915,18 @@ struct boot_info *dt_from_blob(FILE *f)
 		if (off_str+size_str > totalsize)
 			die("String table extends past total size\n");
 	}
+
+	if (version >= 17) {
+		size_dt = be32_to_cpu(bph->size_dt_struct);
+		fprintf(stderr, "\tsize_dt_struct:\t\t%d\n", size_dt);
+		if (off_dt+size_dt > totalsize)
+			die("Structure block extends past total size\n");
+	}
 			
-	if (version < 0x10) {
+	if (version < 16) {
 		flags |= FTF_FULLPATH | FTF_NAMEPROPS | FTF_VARALIGN;
+	} else {
+		flags |= FTF_NOPS;
 	}
 
 	inbuf_init(&memresvbuf,
