@@ -1,14 +1,3 @@
-#include <endian.h>
-
-#if __BYTE_ORDER == __BIG_ENDIAN
-#define cell_to_fdt(x)	(x)
-#else
-/* We do this as a big hairy expression instead of using bswap_32()
- * because we need it to work in asm as well as C. */
-#define cell_to_fdt(x)	((((x) >> 24) & 0xff) | (((x) >> 8) & 0xff00) \
-			 | (((x) << 8) & 0xff0000) | (((x) << 24) & 0xff000000))
-#endif
-
 #ifdef __ASSEMBLY__
 #define ASM_CONST_LL(x)	(x)
 #else
@@ -33,4 +22,7 @@
 #ifndef __ASSEMBLY__
 extern struct fdt_header _test_tree1;
 extern struct fdt_header _truncated_property;
+extern struct fdt_header _bad_node_char;
+extern struct fdt_header _bad_node_format;
+extern struct fdt_header _bad_prop_char;
 #endif /* ! __ASSEMBLY */

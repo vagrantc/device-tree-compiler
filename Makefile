@@ -9,14 +9,16 @@
 # CONFIG_LOCALVERSION from some future config system.
 #
 VERSION = 1
-PATCHLEVEL = 1
+PATCHLEVEL = 3
 SUBLEVEL = 0
 EXTRAVERSION =
 LOCAL_VERSION =
 CONFIG_LOCALVERSION =
 
 CPPFLAGS = -I libfdt
-CFLAGS = -Wall -g -Os
+WARNINGS = -Werror -Wall -Wpointer-arith -Wcast-qual -Wnested-externs \
+	-Wstrict-prototypes -Wmissing-prototypes -Wredundant-decls
+CFLAGS = -g -Os -fPIC -Werror $(WARNINGS)
 
 BISON = bison
 LEX = flex
@@ -27,6 +29,17 @@ PREFIX = $(HOME)
 BINDIR = $(PREFIX)/bin
 LIBDIR = $(PREFIX)/lib
 INCLUDEDIR = $(PREFIX)/include
+
+HOSTOS := $(shell uname -s | tr '[:upper:]' '[:lower:]' | \
+	    sed -e 's/\(cygwin\).*/cygwin/')
+
+ifeq ($(HOSTOS),darwin)
+SHAREDLIB_EXT=dylib
+SHAREDLIB_LINK_OPTIONS=-dynamiclib -Wl,-install_name -Wl,
+else
+SHAREDLIB_EXT=so
+SHAREDLIB_LINK_OPTIONS=-shared -Wl,--version-script=$(LIBFDT_version) -Wl,-soname,
+endif
 
 #
 # Overall rules
@@ -45,17 +58,6 @@ DEPTARGETS = all
 else
 DEPTARGETS = $(filter-out $(NODEPTARGETS),$(MAKECMDGOALS))
 endif
-
-all: dtc libfdt
-
-install: all
-	@$(VECHO) INSTALL
-	$(INSTALL) -d $(DESTDIR)$(BINDIR)
-	$(INSTALL) -m 755 dtc $(DESTDIR)$(BINDIR)
-	$(INSTALL) -d $(DESTDIR)$(LIBDIR)
-	$(INSTALL) -m 644 $(LIBFDT_LIB) $(DESTDIR)$(LIBDIR)
-	$(INSTALL) -d $(DESTDIR)$(INCLUDEDIR)
-	$(INSTALL) -m 644 $(addprefix $(LIBFDT_srcdir)/,$(LIBFDT_INCLUDES)) $(DESTDIR)$(INCLUDEDIR)
 
 #
 # Rules for versioning
@@ -100,46 +102,84 @@ define filechk
 	fi;
 endef
 
-$(VERSION_FILE): Makefile FORCE
-	$(call filechk,version)
 
-#
-# Rules for dtc proper
-#
+include Makefile.convert-dtsv0
 include Makefile.dtc
+include Makefile.ftdump
 
+BIN += convert-dtsv0
 BIN += dtc
+BIN += ftdump
 
-# This stops make from generating the lex and bison output during
-# auto-dependency computation, but throwing them away as an
-# intermediate target and building them again "for real"
-.SECONDARY: $(DTC_GEN_SRCS)
+SCRIPTS = dtdiff
 
-dtc: $(DTC_OBJS)
+all: $(BIN) libfdt
+
 
 ifneq ($(DEPTARGETS),)
 -include $(DTC_OBJS:%.o=%.d)
+-include $(CONVERT_OBJS:%.o=%.d)
+-include $(FTDUMP_OBJS:%.o=%.d)
 endif
+
+
+
 #
 # Rules for libfdt
 #
 LIBFDT_objdir = libfdt
 LIBFDT_srcdir = libfdt
+LIBFDT_archive = $(LIBFDT_objdir)/libfdt.a
+LIBFDT_lib = $(LIBFDT_objdir)/libfdt-$(DTC_VERSION).$(SHAREDLIB_EXT)
+LIBFDT_include = $(addprefix $(LIBFDT_srcdir)/,$(LIBFDT_INCLUDES))
+LIBFDT_version = $(addprefix $(LIBFDT_srcdir)/,$(LIBFDT_VERSION))
+
 include $(LIBFDT_srcdir)/Makefile.libfdt
 
 .PHONY: libfdt
-libfdt: $(LIBFDT_LIB)
+libfdt: $(LIBFDT_archive) $(LIBFDT_lib)
 
-$(LIBFDT_LIB): $(addprefix $(LIBFDT_objdir)/,$(LIBFDT_OBJS))
+$(LIBFDT_archive): $(addprefix $(LIBFDT_objdir)/,$(LIBFDT_OBJS))
+$(LIBFDT_lib): $(addprefix $(LIBFDT_objdir)/,$(LIBFDT_OBJS))
 
 libfdt_clean:
 	@$(VECHO) CLEAN "(libfdt)"
 	rm -f $(addprefix $(LIBFDT_objdir)/,$(STD_CLEANFILES))
-	rm -f $(addprefix $(LIBFDT_objdir)/,$(LIBFDT_CLEANFILES))
+	rm -f $(LIBFDT_objdir)/*.so
 
 ifneq ($(DEPTARGETS),)
 -include $(LIBFDT_OBJS:%.o=$(LIBFDT_objdir)/%.d)
 endif
+
+# This stops make from generating the lex and bison output during
+# auto-dependency computation, but throwing them away as an
+# intermediate target and building them again "for real"
+.SECONDARY: $(DTC_GEN_SRCS) $(CONVERT_GEN_SRCS)
+
+install: all $(SCRIPTS)
+	@$(VECHO) INSTALL
+	$(INSTALL) -d $(DESTDIR)$(BINDIR)
+	$(INSTALL) $(BIN) $(SCRIPTS) $(DESTDIR)$(BINDIR)
+	$(INSTALL) -d $(DESTDIR)$(LIBDIR)
+	$(INSTALL) $(LIBFDT_lib) $(DESTDIR)$(LIBDIR)
+	ln -sf $(notdir $(LIBFDT_lib)) $(DESTDIR)$(LIBDIR)/$(LIBFDT_soname)
+	ln -sf $(LIBFDT_soname) $(DESTDIR)$(LIBDIR)/libfdt.$(SHAREDLIB_EXT)
+	$(INSTALL) -m 644 $(LIBFDT_archive) $(DESTDIR)$(LIBDIR)
+	$(INSTALL) -d $(DESTDIR)$(INCLUDEDIR)
+	$(INSTALL) -m 644 $(LIBFDT_include) $(DESTDIR)$(INCLUDEDIR)
+
+$(VERSION_FILE): Makefile FORCE
+	$(call filechk,version)
+
+
+dtc: $(DTC_OBJS)
+
+convert-dtsv0: $(CONVERT_OBJS)
+	@$(VECHO) LD $@
+	$(LINK.c) -o $@ $^
+
+ftdump:	$(FTDUMP_OBJS)
+
 
 #
 # Testsuite rules
@@ -150,12 +190,12 @@ include tests/Makefile.tests
 #
 # Clean rules
 #
-STD_CLEANFILES = *~ *.o *.d *.a *.i *.s core a.out vgcore.* \
+STD_CLEANFILES = *~ *.o *.$(SHAREDLIB_EXT) *.d *.a *.i *.s core a.out vgcore.* \
 	*.tab.[ch] *.lex.c *.output
 
 clean: libfdt_clean tests_clean
 	@$(VECHO) CLEAN
-	rm -f $(STD_CLEANFILES) $(DTC_CLEANFILES)
+	rm -f $(STD_CLEANFILES)
 	rm -f $(VERSION_FILE)
 	rm -f $(BIN)
 
@@ -193,6 +233,10 @@ clean: libfdt_clean tests_clean
 %.a:
 	@$(VECHO) AR $@
 	$(AR) $(ARFLAGS) $@ $^
+
+$(LIBFDT_lib):
+	@$(VECHO) LD $@
+	$(CC) $(LDFLAGS) -fPIC $(SHAREDLIB_LINK_OPTIONS)$(LIBFDT_soname) -o $(LIBFDT_lib) $^
 
 %.lex.c: %.l
 	@$(VECHO) LEX $@

@@ -31,11 +31,11 @@
 #include "testdata.h"
 
 struct bufstate {
-	void *buf;
+	char *buf;
 	int size;
 };
 
-void expand_buf(struct bufstate *buf, int newsize)
+static void expand_buf(struct bufstate *buf, int newsize)
 {
 	buf->buf = realloc(buf->buf, newsize);
 	if (!buf->buf)
@@ -43,7 +43,7 @@ void expand_buf(struct bufstate *buf, int newsize)
 	buf->size = newsize;
 }
 
-void new_header(struct bufstate *buf, int version, const void *fdt)
+static void new_header(struct bufstate *buf, int version, const void *fdt)
 {
 	int hdrsize;
 
@@ -63,9 +63,9 @@ void new_header(struct bufstate *buf, int version, const void *fdt)
 	fdt_set_boot_cpuid_phys(buf->buf, fdt_boot_cpuid_phys(fdt));
 }
 
-void add_block(struct bufstate *buf, int version, char block, const void *fdt)
+static void add_block(struct bufstate *buf, int version, char block, const void *fdt)
 {
-	int align, size;
+	int align, size, oldsize;
 	const void *src;
 	int offset;
 
@@ -73,7 +73,7 @@ void add_block(struct bufstate *buf, int version, char block, const void *fdt)
 	case 'm':
 		/* Memory reserve map */
 		align = 8;
-		src = fdt + fdt_off_mem_rsvmap(fdt);
+		src = (const char *)fdt + fdt_off_mem_rsvmap(fdt);
 		size = (fdt_num_mem_rsv(fdt) + 1)
 			* sizeof(struct fdt_reserve_entry);
 		break;
@@ -81,23 +81,24 @@ void add_block(struct bufstate *buf, int version, char block, const void *fdt)
 	case 't':
 		/* Structure block */
 		align = 4;
-		src = fdt + fdt_off_dt_struct(fdt);
+		src = (const char *)fdt + fdt_off_dt_struct(fdt);
 		size = fdt_size_dt_struct(fdt);
 		break;
 
 	case 's':
 		/* Strings block */
 		align = 1;
-		src = fdt + fdt_off_dt_strings(fdt);
+		src = (const char *)fdt + fdt_off_dt_strings(fdt);
 		size = fdt_size_dt_strings(fdt);
 		break;
 	default:
 		CONFIG("Bad block '%c'", block);
 	}
 
-	offset = ALIGN(buf->size, align);
-
+	oldsize = buf->size;
+	offset = ALIGN(oldsize, align);
 	expand_buf(buf, offset+size);
+	memset(buf->buf + oldsize, 0, offset - oldsize);
 
 	memcpy(buf->buf + offset, src, size);
 
