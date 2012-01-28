@@ -3,7 +3,7 @@ Title: Device trees everywhere
 Author: David Gibson, Benjamin Herrenschmidt 
 Abstract: This paper presents a method for booting a PowerPC Linux
  kernel on an embedded machine.
-Section: Apps/Programming
+Section: Programming
 
 Format: PDF
 Files: /usr/share/doc/device-tree-compiler/dtc-paper.pdf.gz

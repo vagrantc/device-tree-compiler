@@ -16,7 +16,9 @@ else
 	CFLAGS += -O2
 endif
 
-build: build-stamp
+build: build-arch build-indep
+build-arch: build-stamp
+build-indep: build-stamp
 build-stamp:
 	dh_testdir
 	QUILT_PATCHES=debian/patches quilt push -a || test $$? = 2
@@ -40,7 +42,8 @@ install: build
 	dh_testroot
 	dh_prep
 	dh_installdirs
-	install -m755 dtc $(CURDIR)/debian/device-tree-compiler/usr/bin
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp PREFIX=/usr
+	dh_install --list-missing --sourcedir=debian/tmp
 	touch install-stamp
 
 # Build architecture-independent files here.
@@ -59,6 +62,7 @@ binary-arch: build install
 	dh_strip
 	dh_compress
 	dh_fixperms
+	dh_makeshlibs
 	dh_installdeb
 	dh_shlibdeps
 	dh_gencontrol

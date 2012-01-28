@@ -13,4 +13,10 @@
 13_Add-fdt16_to_cpu-utility-function.patch
 14_Add-data_append_integer-function.patch
 15_Add-support-for-variable-sized-elements.patch
-#16_fdtdump-rename-from-ftdump.patch
+16_fdtdump-rename-from-ftdump.patch
+17_libfdt-Add-support-for-appending-the-values-to-a-exi.patch
+18_libfdt-Activate-testcase-for-appending-properties.patch
+19_dtc-Implement-d-option-to-write-out-a-dependency-fil.patch
+20_Add-fdtget-utility-to-read-property-values-from-a-de.patch
+21_Add-fdtput-utility-to-write-property-values-to-a-dev.patch
+22_Introduce-TESTS_BIN-in-Makefiles-to-identify-tested-.patch
