@@ -20,3 +20,4 @@
 20_Add-fdtget-utility-to-read-property-values-from-a-de.patch
 21_Add-fdtput-utility-to-write-property-values-to-a-dev.patch
 22_Introduce-TESTS_BIN-in-Makefiles-to-identify-tested-.patch
+local-add-missing-header-706137.patch
