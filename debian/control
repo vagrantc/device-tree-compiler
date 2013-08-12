@@ -2,7 +2,8 @@ Source: device-tree-compiler
 Section: devel
 Priority: extra
 Maintainer: Hector Oron <zumbi@debian.org>
-Standards-Version: 3.9.2
+Uploaders: Riku Voipio <riku.voipio@linaro.org>
+Standards-Version: 3.9.4
 Build-Depends: debhelper (>= 5), quilt, flex, bison, texlive, texlive-latex-extra
 Homepage: http://git.jdl.com/gitweb/?p=dtc.git
 Vcs-Git: git://anonscm.debian.org/crosstoolchain/device-tree-compiler.git
