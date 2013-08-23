@@ -42,7 +42,7 @@ install: build
 	dh_testroot
 	dh_prep
 	dh_installdirs
-	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp PREFIX=/usr
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp PREFIX=/usr LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH)
 	dh_install --list-missing --sourcedir=debian/tmp
 	touch install-stamp
 

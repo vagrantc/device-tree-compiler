@@ -1,3 +1,9 @@
+device-tree-compiler (1.4.0-2) unstable; urgency=low
+
+  * Convert to multiarch
+
+ -- Riku Voipio <riku.voipio@linaro.org>  Fri, 23 Aug 2013 14:58:19 +0300
+
 device-tree-compiler (1.4.0-1) unstable; urgency=low
 
   * Added myself to maintainers

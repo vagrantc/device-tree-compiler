@@ -12,6 +12,7 @@ Vcs-Browser: http://anonscm.debian.org/gitweb/?p=crosstoolchain/device-tree-comp
 Package: device-tree-compiler
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Multi-Arch: foreign
 Description: Device Tree Compiler for Flat Device Trees
  Device Tree Compiler, dtc, takes as input a device-tree in
  a given format and outputs a device-tree in another format
@@ -23,6 +24,7 @@ Description: Device Tree Compiler for Flat Device Trees
 Package: libfdt1
 Architecture: any
 Section: libs
+Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}
 Description: Flat Device Trees manipulation library
  This is a library containing functions for manipulating Flat Device Trees.
