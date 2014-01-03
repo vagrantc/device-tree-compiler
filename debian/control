@@ -3,7 +3,7 @@ Section: devel
 Priority: extra
 Maintainer: Hector Oron <zumbi@debian.org>
 Uploaders: Riku Voipio <riku.voipio@linaro.org>
-Standards-Version: 3.9.4
+Standards-Version: 3.9.5
 Build-Depends: debhelper (>= 5), quilt, flex, bison, texlive, texlive-latex-extra
 Homepage: http://git.jdl.com/gitweb/?p=dtc.git
 Vcs-Git: git://anonscm.debian.org/crosstoolchain/device-tree-compiler.git
@@ -26,6 +26,7 @@ Architecture: any
 Section: libs
 Multi-Arch: same
 Depends: ${shlibs:Depends}, ${misc:Depends}
+Pre-Depends: multiarch-support
 Description: Flat Device Trees manipulation library
  This is a library containing functions for manipulating Flat Device Trees.
 
