@@ -21,3 +21,5 @@
 #21_Add-fdtput-utility-to-write-property-values-to-a-dev.patch
 #22_Introduce-TESTS_BIN-in-Makefiles-to-identify-tested-.patch
 #local-add-missing-header-706137.patch
+overlays/0001-dtc-Dynamic-symbols-fixup-support.patch
+overlays/0002-dtc-v-takes-no-argument-drop-extra.patch
