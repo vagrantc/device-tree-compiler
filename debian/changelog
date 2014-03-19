@@ -1,3 +1,9 @@
+device-tree-compiler (1.4.0+dfsg-1.1~20140319~1) wheezy-bbb; urgency=medium
+
+  * Apply patches for device tree overlays (dtbo).
+
+ -- Vagrant Cascadian <vagrant@aikidev.net>  Wed, 19 Mar 2014 16:03:49 -0700
+
 device-tree-compiler (1.4.0+dfsg-1) unstable; urgency=low
 
   * REALLY update to upstream version 1.4.0, closes: #725745
